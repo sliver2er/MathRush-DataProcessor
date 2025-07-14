@@ -4,6 +4,6 @@ __version__ = "0.1.0"
 
 from .pdf_converter import PDFConverter
 from .gpt_extractor import GPTExtractor
-from .db_saver import DBSaver
+from .db_saver import DatabaseSaver
 
-__all__ = ["PDFConverter", "GPTExtractor", "DBSaver"]
+__all__ = ["PDFConverter", "GPTExtractor", "DatabaseSaver"]

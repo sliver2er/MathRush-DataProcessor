@@ -1,5 +1,5 @@
 """설정 관리 모듈"""
 
-from .settings import Settings
+from .settings import settings
 
-__all__ = ["Settings"]
+__all__ = ["settings"]
