@@ -24,6 +24,7 @@ PIPFILE.lock
 
 # Environment variables
 .env
+.env.example
 .venv
 env/
 venv/
