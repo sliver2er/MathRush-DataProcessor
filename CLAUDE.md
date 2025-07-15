@@ -17,38 +17,57 @@ MathRush-DataProcessor/
 ├── processors/
 │   ├── pdf_converter.py    # PDF → 이미지 변환
 │   ├── gpt_extractor.py    # GPT 문제 추출
+│   ├── math_processor.py   # 통합 처리 파이프라인
 │   └── db_saver.py         # 데이터베이스 저장
 ├── config/
-│   ├── settings.py         # 설정 관리
-│   └── prompts.py          # GPT 프롬프트 템플릿
+│   └── settings.py         # 설정 관리
 ├── utils/
-│   ├── logger.py           # 로깅 시스템
-│   └── validator.py        # 데이터 검증
-├── tests/                  # 테스트 파일들
+│   ├── filename_parser.py  # 파일명 파싱
+│   ├── image_extractor.py  # 이미지 추출
+│   ├── math_content_extractor.py  # 수학 내용 추출
+│   ├── problem_segmenter.py  # 문제 분할
+│   └── solution_parser.py  # 해답 파싱
 ├── samples/                # 테스트용 PDF 샘플
 ├── output/                 # 처리 결과물
-└── main.py                 # 메인 실행 파일
+│   ├── images/            # 추출된 이미지
+│   └── processed_images/  # 처리된 이미지
+└── temp_new_process_method.py  # 임시 처리 방법
 ```
 
 ## 🔄 처리 파이프라인
 
 1. **PDF → 이미지 변환** (pdf_converter.py)
    - pdf2image 라이브러리 사용
-   - 고해상도 이미지로 변환
+   - 고해상도 이미지로 변환 (problems/solutions 분리)
 
-2. **GPT 문제 추출** (gpt_extractor.py)
-   - 5페이지씩 배치 처리 (비용 절약)
+2. **이미지에서 문제별 추출** (image_extractor.py)
+   - PDF 페이지에서 개별 문제 이미지 추출
+   - 그래프, 도표, 도형 등 시각적 요소 분리
+   - 문제별 이미지 파일 생성
+
+3. **문제 분할 및 파싱** (problem_segmenter.py)
+   - 페이지 단위 이미지를 개별 문제로 분할
+   - 문제 번호 및 구조 인식
+   - 객관식/주관식 문제 타입 분류
+
+4. **GPT 문제 추출** (gpt_extractor.py)
+   - 문제와 해답을 별도 처리
    - 교육과정 기준 프롬프트 제공
    - JSON 형식으로 구조화된 데이터 반환
 
-3. **데이터 검증 및 정제** (validator.py)
+5. **문제-해답 매칭** (math_processor.py)
+   - 문제와 해답을 번호 기준으로 매칭
+   - 누락된 문제/해답 탐지 및 처리
+   - 완성된 문제 세트 생성
+
+6. **데이터 검증 및 정제** (db_saver.py)
    - 필수 필드 체크
    - 중복 문제 탐지
    - 데이터 형식 정규화
 
-4. **Supabase DB 저장** (db_saver.py)
+7. **Supabase DB 저장** (db_saver.py)
    - problems 테이블에 일괄 삽입
-   - 이미지 파일 업로드 (필요시)
+   - 이미지 파일 경로 저장
    - 성공/실패 로그 기록
 
 ## 🛠️ 기술 스택
@@ -75,6 +94,7 @@ MathRush-DataProcessor/
   difficulty: ENUM                -- easy | medium | hard
   source_info: JSONB              -- 출처 정보
   tags: TEXT[]                    -- 태그 배열
+  images: TEXT[]                  -- 이미지 파일 경로 배열
   created_at: TIMESTAMP
   updated_at: TIMESTAMP
 }
@@ -85,6 +105,7 @@ MathRush-DataProcessor/
 {
   "problems": [
     {
+      "problem_number": 1,
       "content": "문제 본문 전체",
       "problem_type": "multiple_choice",
       "choices": {
@@ -98,17 +119,18 @@ MathRush-DataProcessor/
       "explanation": "해설 내용",
       "curriculum": "2015개정",
       "level": "고3",
-      "subject": "미적분",
-      "chapter": "도함수의 활용",
+      "subject": "수학영역",
+      "chapter": "미적분",
       "difficulty": "medium",
       "tags": ["최댓값", "미분"],
+      "images": ["2020-12-03_suneung_problem_1_img_1.png"],
       "source_info": {
         "exam_type": "수능",
-        "year": 2023,
-        "month": 11,
-        "subject": "미적분",
-        "problem_number": 15,
-        "total_points": 4
+        "exam_date": "2020-12-03",
+        "problem_number": 1,
+        "total_points": 4,
+        "problem_pdf": "2020-12-03_suneung_problems.pdf",
+        "solution_pdf": "2020-12-03_suneung_solutions.pdf"
       }
     }
   ]
@@ -165,14 +187,20 @@ MathRush-DataProcessor/
 
 ## 🔧 실행 방법
 ```bash
-# 기본 실행 (단일 PDF)
-python main.py --input samples/test.pdf --output database
+# 단일 PDF 쌍 처리
+python processors/math_processor.py --problems samples/2020-12-03_suneung_problems.pdf --solutions samples/2020-12-03_suneung_solutions.pdf
 
-# 배치 처리 (폴더 전체)
-python main.py --input samples/ --batch-size 5 --output database
+# 디렉토리 전체 PDF 쌍 처리
+python processors/math_processor.py --directory samples/
 
-# 테스트 모드 (JSON 출력만)
-python main.py --input samples/test.pdf --output json --test-mode
+# 동시 처리 개수 조정 (기본값: 3)
+python processors/math_processor.py --directory samples/ --concurrent 5
+
+# 디버그 모드 (이미지 및 JSON 저장)
+python processors/math_processor.py --problems file1.pdf --solutions file2.pdf --save-images --save-json
+
+# 데이터베이스 연결 테스트
+python processors/math_processor.py --test-db
 ```
 
 ## 💡 다음 우선순위 작업

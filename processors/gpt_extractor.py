@@ -59,6 +59,55 @@ class GPTExtractor:
         
         logger.info(f"GPT Extractor initialized with model: {self.model}")
     
+    def _parse_gpt_json(self, content: str) -> dict:
+        """Parse JSON response from GPT, handling markdown and LaTeX escape sequences."""
+        # Remove markdown code blocks if present
+        json_content = content
+        if content.strip().startswith('```json'):
+            # Extract JSON from markdown code block
+            start = content.find('```json') + 7
+            end = content.rfind('```')
+            if end > start:
+                json_content = content[start:end].strip()
+        elif content.strip().startswith('```'):
+            # Handle generic code blocks
+            start = content.find('```') + 3
+            end = content.rfind('```')
+            if end > start:
+                json_content = content[start:end].strip()
+        
+        # Try to parse JSON with proper error handling for escape sequences
+        try:
+            return json.loads(json_content)
+        except json.JSONDecodeError as json_error:
+            # Try to fix common escape sequence issues with LaTeX
+            logger.warning(f"JSON parsing failed, attempting to fix escape sequences: {json_error}")
+            
+            # Replace problematic LaTeX escape sequences with proper JSON escapes
+            fixed_content = json_content.replace('\\(', '\\\\(').replace('\\)', '\\\\)')
+            fixed_content = fixed_content.replace('\\{', '\\\\{').replace('\\}', '\\\\}')
+            fixed_content = fixed_content.replace('\\[', '\\\\[').replace('\\]', '\\\\]')
+            
+            # Handle comprehensive list of LaTeX commands
+            latex_commands = [
+                'frac', 'lim', 'sum', 'begin', 'end', 'cdot', 'alpha', 'to', 'geq', 'leq',
+                'times', 'pm', 'mp', 'infty', 'sqrt', 'int', 'pi', 'theta', 'beta', 'gamma',
+                'delta', 'epsilon', 'lambda', 'mu', 'nu', 'rho', 'sigma', 'tau', 'phi', 'chi',
+                'psi', 'omega', 'sin', 'cos', 'tan', 'log', 'ln', 'exp', 'sup', 'inf',
+                'max', 'min', 'arg', 'det', 'gcd', 'lcm', 'mod', 'bmod', 'pmod', 'cases',
+                'left', 'right', 'big', 'Big', 'bigg', 'Bigg', 'text', 'textbf', 'textit',
+                'mathbf', 'mathit', 'mathrm', 'mathcal', 'mathfrak', 'mathbb', 'overline',
+                'underline', 'hat', 'tilde', 'vec', 'bar', 'dot', 'ddot', 'prime', 'dagger',
+                'ddagger', 'star', 'ast', 'oplus', 'ominus', 'otimes', 'oslash', 'odot',
+                'bigcup', 'bigcap', 'bigvee', 'bigwedge', 'biguplus', 'bigotimes', 'bigoplus'
+            ]
+            
+            for cmd in latex_commands:
+                fixed_content = fixed_content.replace(f'\\{cmd}', f'\\\\{cmd}')
+            
+            # Try parsing again
+            return json.loads(fixed_content)
+    
     def encode_image(self, image_path: str) -> str:
         """
         Encode image to base64 for GPT-4 Vision.
@@ -89,18 +138,19 @@ class GPTExtractor:
 
 다음 규칙을 따라주세요:
 
-1. **문제 식별**: 각 문제를 정확히 구분하여 추출하고 문제 번호를 정확히 인식
-2. **문제 유형 분류**:
+1. **실제 수학 문제만 추출하라**: 페이지 번호, 헤더, 푸터, 출판사명, 시험 제목 등은 무시하고 오직 수학 문제 내용만 추출
+2. **문제 번호 형식을 인식하라**: 1, 2, 3... 또는 (1), (2), (3)... 또는 ①, ②, ③... 등 다양한 형식의 문제 번호를 정확히 인식
+3. **문제 유형 분류**:
    - "multiple_choice": 객관식 (선택지가 있는 경우)
-   - "subjective": 주관식 (서술형, 단답형)
+   - "subjective": 주관식 (선택지가 없으면 주관식으로 분류)
 
-3. **학년 분류** (고등학교만):
+4. **학년 분류** (고등학교만):
    - "고1", "고2", "고3"
 
-4. **과목 분류** (고등학교 수학):
+5. **과목 분류** (고등학교 수학):
    - "수학상", "수학하", "수학Ⅰ", "수학Ⅱ", "미적분", "확률과통계", "기하"
 
-5. **난이도 분류**:
+6. **난이도 분류**:
    - "easy": 기초 수준
    - "medium": 표준 수준  
    - "hard": 심화 수준
@@ -137,7 +187,7 @@ class GPTExtractor:
 
 중요사항:
 - 수식은 LaTeX 형식으로 표현
-- 그래프나 도형이 있으면 텍스트로 설명 포함
+- 그래프나 도형이 있으면 상세히 텍스트로 설명하고 "첨부된 이미지 참조"라고 명시
 - 문제가 여러 개면 각각 분리하여 추출
 - 정답과 해설은 절대 포함하지 마세요 (별도 파일에서 처리됩니다)
 - 문제 번호를 정확히 인식하여 problem_number에 기록 (매우 중요!)
@@ -146,6 +196,76 @@ class GPTExtractor:
 - 반드시 유효한 JSON 형식으로 응답
 
 이제 이미지를 분석하여 고등학교 수학 문제들을 추출해주세요."""
+    
+    def get_single_problem_extraction_prompt(self) -> str:
+        """
+        Get the system prompt for extracting a single problem from an individual problem image.
+        
+        Returns:
+            Prompt for extracting single problem content, choices, and metadata
+        """
+        return """당신은 한국의 고등학교 수학 문제집의 개별 문제를 분석하는 전문가입니다.
+주어진 이미지는 하나의 수학 문제를 담고 있으며, 이 문제의 내용과 메타데이터를 추출해주세요.
+
+다음 규칙을 따라주세요:
+
+1. **실제 수학 문제만 추출하라**: 이미지에서 수학 문제의 핵심 내용만 추출하고, 불필요한 텍스트는 무시
+2. **문제 번호 형식을 인식하라**: 1, 2, 3... 또는 (1), (2), (3)... 또는 ①, ②, ③... 등 다양한 형식의 문제 번호를 정확히 인식
+3. **문제 유형 분류**:
+   - "multiple_choice": 객관식 (선택지가 있는 경우)
+   - "subjective": 주관식 (선택지가 없으면 주관식으로 분류)
+
+4. **학년 분류** (고등학교만):
+   - "고1", "고2", "고3"
+
+5. **과목 분류** (고등학교 수학):
+   - "수학상", "수학하", "수학Ⅰ", "수학Ⅱ", "미적분", "확률과통계", "기하"
+
+6. **난이도 분류**:
+   - "easy": 기초 수준
+   - "medium": 표준 수준  
+   - "hard": 심화 수준
+
+7. **JSON 형식** (단일 문제):
+```json
+{
+  "problems": [
+    {
+      "problem_number": 1,
+      "content": "문제 본문 전체 (수식 포함)",
+      "problem_type": "multiple_choice" 또는 "subjective",
+      "choices": {
+        "1": "선택지1",
+        "2": "선택지2", 
+        "3": "선택지3",
+        "4": "선택지4",
+        "5": "선택지5"
+      }, // 객관식인 경우만, 주관식이면 null
+      "level": "고1" 또는 "고2" 또는 "고3",
+      "subject": "과목명",
+      "chapter": "단원명",
+      "difficulty": "easy/medium/hard",
+      "tags": ["태그1", "태그2"], // 주요 개념 키워드
+      "source_info": {
+        "exam_type": "시험 유형 추정 (수능, 모의고사, 학교시험 등)",
+        "problem_number": 문제번호,
+        "total_points": 배점 // 명시되어 있는 경우만
+      }
+    }
+  ]
+}
+```
+
+중요사항:
+- 수식은 LaTeX 형식으로 표현
+- 추가 수학적 내용 이미지가 제공되면 "첨부된 이미지 참조"라고 명시하고 상세히 설명
+- 정답과 해설은 절대 포함하지 마세요
+- 문제 번호를 정확히 인식하여 problem_number에 기록 (매우 중요!)
+- 고등학교 수학만 처리 (중학교 내용 제외)
+- 반드시 유효한 JSON 형식으로 응답
+- 이미지는 하나의 문제만 포함하므로 problems 배열에는 하나의 문제만 있어야 함
+
+이제 이미지를 분석하여 이 개별 고등학교 수학 문제를 추출해주세요."""
 
     def get_solutions_extraction_prompt(self) -> str:
         """
@@ -160,9 +280,10 @@ class GPTExtractor:
 
 다음 규칙을 따라주세요:
 
-1. **문제 번호 인식**: 각 해답이 어느 문제에 대응되는지 번호로 정확히 파악 (매우 중요!)
-2. **정답 추출**: 객관식은 번호(1,2,3,4,5), 주관식은 답을 정확히 추출
-3. **해설 추출**: 상세한 풀이 과정과 설명을 모두 포함
+1. **실제 수학 문제 해답만 추출하라**: 페이지 번호, 헤더, 푸터, 출판사명 등은 무시하고 오직 수학 문제의 해답과 해설만 추출
+2. **문제 번호 형식을 인식하라**: 1, 2, 3... 또는 (1), (2), (3)... 또는 ①, ②, ③... 등 다양한 형식의 문제 번호를 정확히 인식하여 각 해답이 어느 문제에 대응되는지 번호로 정확히 파악 (매우 중요!)
+3. **정답 추출**: 객관식은 번호(1,2,3,4,5), 주관식은 답을 정확히 추출
+4. **해설 추출**: 상세한 풀이 과정과 설명을 모두 포함
 
 4. **JSON 형식**:
 ```json
@@ -186,49 +307,76 @@ class GPTExtractor:
 - 수식은 LaTeX 형식으로 표현
 - 해설의 모든 단계와 설명을 빠짐없이 포함
 - 문제 번호를 정확히 인식하여 problem_number에 기록 (매우 중요!)
-- 그래프나 도형 설명도 해설에 포함
+- 그래프나 도형 설명도 해설에 상세히 포함하고 "첨부된 이미지 참조"라고 명시
 - 반드시 유효한 JSON 형식으로 응답
 - 해설이 여러 단계로 나뉘어 있다면 solution_steps에 단계별로 정리
 - 고등학교 수학 수준의 상세한 해설 제공
 
 이제 이미지를 분석하여 해답과 해설을 추출해주세요."""
 
-    def extract_problems_from_image(self, image_path: str) -> Dict[str, Any]:
+    def extract_problem_from_image(self, problem_image_path: str, math_content_images: List[str] = None) -> Dict[str, Any]:
         """
-        Extract problems (without solutions) from a single image.
+        Extract a single problem from an individual problem image.
         
         Args:
-            image_path: Path to image file
+            problem_image_path: Path to individual problem image
+            math_content_images: List of paths to mathematical content images within this problem
             
         Returns:
-            Dictionary containing extracted problems
+            Dictionary containing extracted problem
         """
         try:
-            logger.info(f"Extracting problems from: {image_path}")
+            logger.info(f"Extracting problem from: {problem_image_path}")
             
-            # Encode image
-            base64_image = self.encode_image(image_path)
+            # Encode main problem image
+            base64_image = self.encode_image(problem_image_path)
+            
+            # Prepare content list starting with problem image
+            content_list = [
+                {
+                    "type": "text",
+                    "text": "이 고등학교 수학 문제를 분석하여 JSON 형식으로 추출해주세요. 정답과 해설은 제외하고 문제 내용과 메타데이터만 추출해주세요."
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/png;base64,{base64_image}"
+                    }
+                }
+            ]
+            
+            # Add mathematical content images if provided
+            if math_content_images:
+                content_list.append({
+                    "type": "text",
+                    "text": f"다음 {len(math_content_images)}개의 추가 이미지는 이 문제에 포함된 수학적 내용(그래프, 표, 도형 등)입니다:"
+                })
+                
+                for i, content_image_path in enumerate(math_content_images, 1):
+                    try:
+                        content_base64 = self.encode_image(content_image_path)
+                        content_list.append({
+                            "type": "text",
+                            "text": f"수학적 내용 {i}:"
+                        })
+                        content_list.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{content_base64}"
+                            }
+                        })
+                    except Exception as e:
+                        logger.warning(f"Failed to encode math content image {content_image_path}: {e}")
             
             # Prepare messages
             messages = [
                 {
                     "role": "system",
-                    "content": self.get_problems_extraction_prompt()
+                    "content": self.get_single_problem_extraction_prompt()
                 },
                 {
                     "role": "user", 
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "이 고등학교 수학 문제집 페이지를 분석하여 모든 문제를 JSON 형식으로 추출해주세요. 정답과 해설은 제외하고 문제 내용과 메타데이터만 추출해주세요."
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{base64_image}"
-                            }
-                        }
-                    ]
+                    "content": content_list
                 }
             ]
             
@@ -243,84 +391,55 @@ class GPTExtractor:
             # Extract response content
             content = response.choices[0].message.content
             
-            # Parse JSON response
+            # Parse JSON response using the helper function
             try:
-                result = json.loads(content)
-                problems_count = len(result.get('problems', []))
-                logger.info(f"Successfully extracted {problems_count} problems")
-                return result
+                result = self._parse_gpt_json(content)
+                
+                # Since this is a single problem, extract it from the problems array
+                if 'problems' in result and result['problems']:
+                    problem_data = result['problems'][0]  # Take the first (and should be only) problem
+                    logger.info(f"Successfully extracted problem: {problem_data.get('problem_number', 'unknown')}")
+                    return problem_data
+                else:
+                    logger.error("No problem found in GPT response")
+                    return {"error": "No problem found", "raw_response": content}
+                    
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse JSON response: {e}")
                 logger.debug(f"Raw response: {content}")
-                return {"problems": [], "error": "JSON parsing failed", "raw_response": content}
+                return {"error": "JSON parsing failed", "raw_response": content}
                 
         except Exception as e:
-            logger.error(f"Error extracting problems from {image_path}: {e}")
-            return {"problems": [], "error": str(e)}
+            logger.error(f"Error extracting problem from {problem_image_path}: {e}")
+            return {"error": str(e)}
 
-    def extract_solutions_from_image(self, image_path: str) -> Dict[str, Any]:
+    def extract_answers_from_answer_key(self, answer_key_dict: Dict[int, str]) -> Dict[str, Any]:
         """
-        Extract solutions from a single image.
+        Convert answer key dictionary to the format expected by the processor.
         
         Args:
-            image_path: Path to image file
+            answer_key_dict: Dictionary mapping problem numbers to answers
             
         Returns:
-            Dictionary containing extracted solutions
+            Dictionary containing solutions in expected format
         """
         try:
-            logger.info(f"Extracting solutions from: {image_path}")
+            logger.info(f"Converting answer key with {len(answer_key_dict)} answers")
             
-            # Encode image
-            base64_image = self.encode_image(image_path)
-            
-            # Prepare messages
-            messages = [
-                {
-                    "role": "system",
-                    "content": self.get_solutions_extraction_prompt()
-                },
-                {
-                    "role": "user", 
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "이 고등학교 수학 문제집 해답지 페이지를 분석하여 모든 정답과 해설을 JSON 형식으로 추출해주세요."
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{base64_image}"
-                            }
-                        }
-                    ]
+            solutions = []
+            for problem_number, answer in answer_key_dict.items():
+                solution = {
+                    "problem_number": problem_number,
+                    "correct_answer": answer
                 }
-            ]
+                solutions.append(solution)
             
-            # Call GPT-4o-mini
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                max_tokens=self.max_tokens,
-                temperature=self.temperature
-            )
+            result = {"solutions": solutions}
+            logger.info(f"Successfully converted {len(solutions)} answers")
+            return result
             
-            # Extract response content
-            content = response.choices[0].message.content
-            
-            # Parse JSON response
-            try:
-                result = json.loads(content)
-                solutions_count = len(result.get('solutions', []))
-                logger.info(f"Successfully extracted {solutions_count} solutions")
-                return result
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse JSON response: {e}")
-                logger.debug(f"Raw response: {content}")
-                return {"solutions": [], "error": "JSON parsing failed", "raw_response": content}
-                
         except Exception as e:
-            logger.error(f"Error extracting solutions from {image_path}: {e}")
+            logger.error(f"Error converting answer key: {e}")
             return {"solutions": [], "error": str(e)}
 
     def extract_from_image_list(self, image_paths: List[str], extract_type: str = "problems", delay: float = 1.0, max_concurrent: int = 3) -> List[Dict[str, Any]]:
@@ -423,7 +542,7 @@ class GPTExtractor:
         
         return [r for r in results if r is not None]
 
-    def match_problems_and_solutions_scoped(self, problems_list: List[Dict[str, Any]], solutions_list: List[Dict[str, Any]], exam_metadata: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    def match_problems_and_solutions_scoped(self, problems_list: List[Dict[str, Any]], solutions_list: List[Dict[str, Any]], exam_metadata: Dict[str, Any], extracted_images: Dict[str, List[str]] = None) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """
         Match problems with solutions by problem number within the same exam (scoped).
         
@@ -431,11 +550,16 @@ class GPTExtractor:
             problems_list: List of problem extraction results from one exam
             solutions_list: List of solution extraction results from same exam
             exam_metadata: Metadata about this specific exam
+            extracted_images: Dictionary mapping page keys to extracted image filenames
             
         Returns:
             Tuple of (matched_problems, matching_report)
         """
         logger.info(f"Matching problems with solutions for exam: {exam_metadata.get('exam_date', 'unknown')}")
+        
+        # Initialize extracted_images if not provided
+        if extracted_images is None:
+            extracted_images = {}
         
         # Flatten all problems and solutions from this exam
         all_problems = []
@@ -488,6 +612,14 @@ class GPTExtractor:
                 matching_report["matched_by_position"] += 1
                 logger.warning(f"Using position fallback for problem {i+1} (problem_number: {problem_num})")
             
+            # Find images for this problem (look for images from the same page)
+            problem_images = []
+            for page_key, image_list in extracted_images.items():
+                if f"problem" in page_key:
+                    # Add all images from problem pages for now
+                    # Could be more sophisticated matching based on page number
+                    problem_images.extend(image_list)
+            
             # Create combined problem entry
             if solution:
                 # Add exam metadata to source_info
@@ -506,8 +638,7 @@ class GPTExtractor:
                 combined_problem = {
                     **problem,  # All problem data
                     "correct_answer": solution.get("correct_answer", ""),
-                    "explanation": solution.get("explanation", ""),
-                    "solution_steps": solution.get("solution_steps", []),
+                    "images": problem_images,  # Add extracted images
                     "match_method": match_method,
                     "source_info": source_info
                 }
@@ -536,8 +667,7 @@ class GPTExtractor:
                 combined_problem = {
                     **problem,
                     "correct_answer": "",
-                    "explanation": "",
-                    "solution_steps": [],
+                    "images": problem_images,  # Add extracted images
                     "match_method": "none",
                     "source_info": source_info
                 }

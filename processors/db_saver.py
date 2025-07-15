@@ -86,7 +86,6 @@ class DatabaseSaver:
         validated.update({
             'problem_type': problem.get('problem_type', 'subjective'),
             'choices': problem.get('choices', None),
-            'explanation': problem.get('explanation', ''),
             'curriculum': problem.get('curriculum', '2015개정'),
             'level': problem.get('level', ''),
             'subject': problem.get('subject', ''),
@@ -94,6 +93,7 @@ class DatabaseSaver:
             'difficulty': problem.get('difficulty', 'medium'),
             'source_info': problem.get('source_info', {}),
             'tags': problem.get('tags', []),
+            'images': problem.get('images', []),  # Field for image file paths
             'created_at': datetime.now().isoformat(),
             'updated_at': datetime.now().isoformat()
         })
@@ -131,6 +131,13 @@ class DatabaseSaver:
         
         if not isinstance(validated['tags'], list):
             validated['tags'] = []
+        
+        # Validate images field
+        if not isinstance(validated['images'], list):
+            validated['images'] = []
+        
+        # Ensure all image paths are strings
+        validated['images'] = [str(img) for img in validated['images'] if img]
         
         return validated
     

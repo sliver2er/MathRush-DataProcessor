@@ -41,6 +41,9 @@ from pathlib import Path
 try:
     from config.settings import settings
     from utils.filename_parser import FilenameParser
+    from utils.problem_segmenter import ProblemSegmenter
+    from utils.math_content_extractor import MathContentExtractor
+    from utils.solution_parser import SolutionParser
     from processors.pdf_converter import PDFConverter
     from processors.gpt_extractor import GPTExtractor
     from processors.db_saver import DatabaseSaver
@@ -49,6 +52,9 @@ except ImportError:
     sys.path.append(os.path.dirname(os.path.dirname(__file__)))
     from config.settings import settings
     from utils.filename_parser import FilenameParser
+    from utils.problem_segmenter import ProblemSegmenter
+    from utils.math_content_extractor import MathContentExtractor
+    from utils.solution_parser import SolutionParser
     from processors.pdf_converter import PDFConverter
     from processors.gpt_extractor import GPTExtractor
     from processors.db_saver import DatabaseSaver
@@ -75,6 +81,9 @@ class MathProcessor:
         
         # Initialize components
         self.filename_parser = FilenameParser()
+        self.problem_segmenter = ProblemSegmenter()
+        self.math_content_extractor = MathContentExtractor()
+        self.solution_parser = SolutionParser()
         self.pdf_converter = PDFConverter()
         self.gpt_extractor = GPTExtractor()
         self.db_saver = DatabaseSaver()
@@ -200,8 +209,37 @@ class MathProcessor:
             
             logger.info(f"Converted {len(problems_images)} problem pages, {len(solutions_images)} solution pages")
             
-            # Step 2: Extract problems and solutions using GPT
-            logger.info("Step 2: Extracting problems and solutions with GPT")
+            # Step 2: Extract images from PDF pages
+            logger.info("Step 2: Extracting images from PDF pages")
+            
+            # Create permanent image directory
+            image_output_dir = os.path.join(settings.OUTPUT_DIR, "images", exam_metadata['base_name'])
+            os.makedirs(image_output_dir, exist_ok=True)
+            
+            # Extract images from problems and solutions
+            all_extracted_images = {}  # problem_number -> [image_files]
+            
+            for img_path in problems_images:
+                page_num = self._extract_page_number(img_path)
+                base_name = f"{exam_metadata['base_name']}_problem_{page_num}"
+                extracted = self.image_extractor.extract_images(img_path, image_output_dir, base_name)
+                if extracted:
+                    all_extracted_images[f"problem_page_{page_num}"] = extracted
+                    logger.debug(f"Extracted {len(extracted)} images from problem page {page_num}")
+            
+            for img_path in solutions_images:
+                page_num = self._extract_page_number(img_path)
+                base_name = f"{exam_metadata['base_name']}_solution_{page_num}"
+                extracted = self.image_extractor.extract_images(img_path, image_output_dir, base_name)
+                if extracted:
+                    all_extracted_images[f"solution_page_{page_num}"] = extracted
+                    logger.debug(f"Extracted {len(extracted)} images from solution page {page_num}")
+            
+            total_extracted = sum(len(imgs) for imgs in all_extracted_images.values())
+            logger.info(f"Extracted {total_extracted} images from all pages")
+            
+            # Step 3: Extract problems and solutions using GPT
+            logger.info("Step 3: Extracting problems and solutions with GPT")
             
             # Extract problems
             problems_results = self.gpt_extractor.extract_from_image_list(
@@ -225,7 +263,8 @@ class MathProcessor:
             matched_problems, matching_report = self.gpt_extractor.match_problems_and_solutions_scoped(
                 problems_results,
                 solutions_results,
-                exam_metadata
+                exam_metadata,
+                all_extracted_images
             )
             
             # Step 4: Save to database
@@ -419,6 +458,25 @@ class MathProcessor:
             
         except Exception as e:
             logger.error(f"Failed to save images: {e}")
+    
+    def _extract_page_number(self, image_path: str) -> str:
+        """Extract page number from image filename."""
+        # Expected format: filename_page_001.png
+        basename = os.path.basename(image_path)
+        try:
+            # Extract page number from filename
+            parts = basename.split('_')
+            for part in parts:
+                if part.startswith('page'):
+                    continue
+                if part.replace('.png', '').replace('.jpg', '').replace('.jpeg', '').isdigit():
+                    return part.replace('.png', '').replace('.jpg', '').replace('.jpeg', '')
+                # Try to find 3-digit page number
+                if len(part) >= 3 and part[:3].isdigit():
+                    return part[:3]
+            return "001"  # Default fallback
+        except:
+            return "001"
     
     def _cleanup_temp_files(self, temp_base: str):
         """Clean up temporary files."""
