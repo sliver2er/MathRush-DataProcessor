@@ -16,9 +16,8 @@ MathRush 프로젝트용 수학 문제 **수동 처리** 및 라벨링 시스템
 MathRush-DataProcessor/
 ├── manual_answer_input.py      # 수동 답안 입력 유틸리티
 ├── simple_processor.py         # 간단한 이미지 처리기
-├── lightweight_gpt_extractor.py # 경량 GPT 추출기
 ├── processors/
-│   ├── gpt_extractor.py        # 기존 GPT 추출기 (참고용)
+│   ├── gpt_extractor.py        # GPT 추출기
 │   └── db_saver.py             # 데이터베이스 저장
 ├── config/
 │   └── settings.py             # 설정 관리
@@ -38,17 +37,17 @@ MathRush-DataProcessor/
 
 2. **디렉토리 구성**
    ```
-   input/2020-12-03_suneung/
-   ├── 2020-12-03_suneung_problem_01.png
-   ├── 2020-12-03_suneung_problem_01_diagram.png
-   ├── 2020-12-03_suneung_problem_02.png
+   input/2020-12-03_suneung_가형/
+   ├── 2020-12-03_suneung_가형_problem_01.png
+   ├── 2020-12-03_suneung_가형_problem_01_diagram.png
+   ├── 2020-12-03_suneung_가형_problem_02.png
    └── ...
    ```
 
 ### **단계 2: 수동 답안 입력** (manual_answer_input.py)
 1. **답안 입력 유틸리티 실행**
    ```bash
-   python manual_answer_input.py input/2020-12-03_suneung/
+   python manual_answer_input.py input/2020-12-03_suneung_가형/
    ```
 2. **대화식 답안 입력**
    - 문제 유형 선택 (객관식/주관식)
@@ -58,9 +57,9 @@ MathRush-DataProcessor/
 ### **단계 3: 자동 내용 추출** (simple_processor.py)
 1. **이미지 처리 실행**
    ```bash
-   python simple_processor.py input/2020-12-03_suneung/
+   python simple_processor.py input/2020-12-03_suneung_가형/
    ```
-2. **GPT 내용 추출** (lightweight_gpt_extractor.py)
+2. **GPT 내용 추출** (processors/gpt_extractor.py)
    - 문제 내용만 추출 (설명 제외)
    - 객관식 선택지 추출
    - 수동 답안과 자동 결합
@@ -186,10 +185,10 @@ MathRush-DataProcessor/
 ## 🔧 실행 방법 (간소화)
 ```bash
 # 1단계: 수동 답안 입력
-python manual_answer_input.py input/2020-12-03_suneung/
+python manual_answer_input.py input/2020-12-03_suneung_가형/
 
 # 2단계: 이미지 내용 처리
-python simple_processor.py input/2020-12-03_suneung/
+python simple_processor.py input/2020-12-03_suneung_가형/
 
 # 여러 시험 일괄 처리
 python simple_processor.py input/ --recursive
@@ -201,8 +200,24 @@ python manual_answer_input.py input/ --list
 python check_db.py
 
 # 개별 이미지 테스트 (디버그용)
-python lightweight_gpt_extractor.py path/to/problem.png --verbose
+python -m processors.gpt_extractor path/to/problem.png --verbose
 ```
+
+## 📋 지원하는 시험 유형
+
+### 수능/모의고사 과목별
+- **2020-12-03_suneung_가형** (과거 가형)
+- **2020-12-03_suneung_나형** (과거 나형)
+- **2022-11-17_suneung** (2022+ 수능 공통, 1-22번)
+- **2022-11-17_suneung_공통** (명시적 공통 지정)
+- **2022-11-17_suneung_미적분** (현재 미적분, 23-30번)
+- **2022-11-17_suneung_기하** (현재 기하, 23-30번)
+- **2022-11-17_suneung_확통** (현재 확률과통계, 23-30번)
+- **2021-09-01_mock_가형** (모의고사 가형)
+
+### 기본 과목
+- **2024-03-15_school_수학상** (학교시험 수학상)
+- **2024-06-10_monthly_수학1** (월례고사 수학Ⅰ)
 
 ## 💡 다음 우선순위 작업 (간소화)
 1. **수동 이미지 분할** - 시험 문제를 개별 이미지로 분할

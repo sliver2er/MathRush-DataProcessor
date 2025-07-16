@@ -9,21 +9,17 @@ import sys
 import argparse
 import re
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 from pathlib import Path
 import time
 
 # Import utilities and processors
 try:
-    from config.settings import settings
-    from processors.db_saver import DatabaseSaver
-    from lightweight_gpt_extractor import LightweightGPTExtractor
+    from processors import DatabaseSaver, GPTExtractor
     from utils.filename_parser import FilenameParser
 except ImportError:
     sys.path.append(os.path.dirname(__file__))
-    from config.settings import settings
-    from processors.db_saver import DatabaseSaver
-    from lightweight_gpt_extractor import LightweightGPTExtractor
+    from processors import DatabaseSaver, GPTExtractor
     from utils.filename_parser import FilenameParser
 
 logger = logging.getLogger(__name__)
@@ -35,7 +31,7 @@ class SimpleProcessor:
     def __init__(self):
         """Initialize the simple processor."""
         self.db_saver = DatabaseSaver()
-        self.gpt_extractor = LightweightGPTExtractor()
+        self.gpt_extractor = GPTExtractor()
         self.filename_parser = FilenameParser()
         
         # Test database connection
@@ -58,35 +54,40 @@ class SimpleProcessor:
         if not exam_path.exists():
             raise FileNotFoundError(f"Exam directory not found: {exam_dir}")
         
-        # Patterns for different file types
-        problem_pattern = re.compile(r'(.+)_problem_(\d+)\.png$')
-        content_pattern = re.compile(r'(.+)_problem_(\d+)_(?:diagram|content|graph|figure).*\.png$')
+        # Patterns for different file types (support png, jpg, jpeg)
+        problem_pattern = re.compile(r'(.+)_problem_(\d+)\.(png|jpg|jpeg)$', re.IGNORECASE)
+        content_pattern = re.compile(r'(.+)_problem_(\d+)_(?:diagram|content|graph|figure).*\.(png|jpg|jpeg)$', re.IGNORECASE)
         
         problems = {}
         
+        # Supported image extensions
+        image_extensions = ['*.png', '*.jpg', '*.jpeg', '*.PNG', '*.JPG', '*.JPEG']
+        
         # First pass: find all problem images
-        for file_path in exam_path.glob("*.png"):
-            match = problem_pattern.match(file_path.name)
-            if match:
-                exam_name = match.group(1)
-                problem_number = int(match.group(2))
-                
-                if problem_number not in problems:
-                    problems[problem_number] = {
-                        'exam_name': exam_name,
-                        'problem_image': str(file_path),
-                        'math_content_images': []
-                    }
-                else:
-                    problems[problem_number]['problem_image'] = str(file_path)
+        for ext in image_extensions:
+            for file_path in exam_path.glob(ext):
+                match = problem_pattern.match(file_path.name)
+                if match:
+                    exam_name = match.group(1)
+                    problem_number = int(match.group(2))
+                    
+                    if problem_number not in problems:
+                        problems[problem_number] = {
+                            'exam_name': exam_name,
+                            'problem_image': str(file_path),
+                            'math_content_images': []
+                        }
+                    else:
+                        problems[problem_number]['problem_image'] = str(file_path)
         
         # Second pass: find math content images
-        for file_path in exam_path.glob("*.png"):
-            match = content_pattern.match(file_path.name)
-            if match:
-                problem_number = int(match.group(2))
-                if problem_number in problems:
-                    problems[problem_number]['math_content_images'].append(str(file_path))
+        for ext in image_extensions:
+            for file_path in exam_path.glob(ext):
+                match = content_pattern.match(file_path.name)
+                if match:
+                    problem_number = int(match.group(2))
+                    if problem_number in problems:
+                        problems[problem_number]['math_content_images'].append(str(file_path))
         
         # Convert to sorted list format
         sorted_problems = []
@@ -140,7 +141,7 @@ class SimpleProcessor:
             logger.error(f"Error querying manual answers for {exam_name}: {e}")
             return {}
     
-    def process_problem_images(self, problems: List[Dict], manual_answers: Dict[int, Dict]) -> List[Dict]:
+    def process_problem_images(self, problems: List[Dict], manual_answers: Dict[int, Dict]) -> Tuple[List[Dict], List[Dict]]:
         """
         Process problem images through GPT extraction.
         
@@ -149,9 +150,10 @@ class SimpleProcessor:
             manual_answers: Manual answers from database
             
         Returns:
-            List of processed problem records
+            Tuple of (processed_problems, failed_problems)
         """
         processed_problems = []
+        failed_problems = []
         
         for problem in problems:
             problem_num = problem['problem_number']
@@ -181,8 +183,7 @@ class SimpleProcessor:
                     'correct_answer': manual_data.get('correct_answer', ''),
                     'explanation': '',  # Not needed per requirements
                     
-                    # Metadata fields
-                    'curriculum': manual_data.get('curriculum', '2015개정'),
+                    # Metadata fields (only fields that exist in database)
                     'level': manual_data.get('level', '고3'),
                     'subject': manual_data.get('subject', '수학영역'),
                     'chapter': manual_data.get('chapter', ''),
@@ -209,40 +210,19 @@ class SimpleProcessor:
                 
                 processed_problems.append(combined_data)
                 
-                logger.info(f"  ✅ Problem {problem_num}: {extracted_data.get('problem_type', 'unknown')} - Content: {len(extracted_data.get('content', ''))[:50]}...")
+                logger.info(f"  ✅ Problem {problem_num}: {extracted_data.get('problem_type', 'unknown')} - Content: {str(extracted_data.get('content', ''))[:50]}...")
                 
             except Exception as e:
                 logger.error(f"  ❌ Failed to process Problem {problem_num}: {e}")
-                
-                # Create fallback record
-                fallback_data = {
-                    'content': f'[Processing Failed] Problem {problem_num} from {problem["exam_name"]}',
-                    'problem_type': 'subjective',
-                    'choices': None,
-                    'correct_answer': manual_answers.get(problem_num, {}).get('correct_answer', ''),
-                    'explanation': '',
-                    'curriculum': '2015개정',
-                    'level': '고3',
-                    'subject': '수학영역',
-                    'chapter': '',
-                    'difficulty': 'medium',
-                    'tags': ['processing_failed'],
-                    'source_info': {
-                        'exam_name': problem['exam_name'],
-                        'problem_number': problem_num,
-                        'problem_image': problem_image,
-                        'processing_error': str(e)
-                    },
-                    'images': [problem_image],
-                    'update_mode': manual_answers.get(problem_num, {}).get('id') is not None
-                }
-                
-                if manual_answers.get(problem_num, {}).get('id'):
-                    fallback_data['id'] = manual_answers[problem_num]['id']
-                
-                processed_problems.append(fallback_data)
+                # Track failed problems separately
+                failed_problems.append({
+                    'problem_number': problem_num,
+                    'problem_image': problem_image,
+                    'error': str(e),
+                    'exam_name': problem['exam_name']
+                })
         
-        return processed_problems
+        return processed_problems, failed_problems
     
     def update_database(self, processed_problems: List[Dict]) -> Dict[str, int]:
         """
@@ -342,11 +322,14 @@ class SimpleProcessor:
             
             # Step 3: Process images through GPT
             print("\n🤖 STEP 3: Processing images through GPT...")
-            processed_problems = self.process_problem_images(problems, manual_answers)
+            processed_problems, failed_problems = self.process_problem_images(problems, manual_answers)
             
             # Step 4: Update database
             print("\n💾 STEP 4: Updating database...")
             stats = self.update_database(processed_problems)
+            
+            # Add failed problems to stats
+            stats['processing_failed'] = len(failed_problems)
             
             # Display final results
             print(f"\n{'='*60}")
@@ -354,13 +337,21 @@ class SimpleProcessor:
             print(f"{'='*60}")
             print(f"✅ Updated records: {stats['updated']}")
             print(f"➕ New records: {stats['inserted']}")
-            print(f"❌ Failed: {stats['failed']}")
+            print(f"❌ Database failures: {stats['failed']}")
+            print(f"🔄 Processing failures: {stats['processing_failed']}")
             print(f"📈 Total processed: {stats['total']}")
             
-            success_rate = (stats['updated'] + stats['inserted']) / stats['total'] * 100
+            # Show failed problems if any
+            if failed_problems:
+                print(f"\n⚠️  Failed to process {len(failed_problems)} problems:")
+                for failed in failed_problems:
+                    print(f"   Problem {failed['problem_number']}: {failed['error']}")
+            
+            total_failures = stats['failed'] + stats['processing_failed']
+            success_rate = (stats['updated'] + stats['inserted']) / len(problems) * 100
             print(f"📊 Success rate: {success_rate:.1f}%")
             
-            return stats['failed'] == 0
+            return total_failures == 0
             
         except Exception as e:
             logger.error(f"Error processing exam directory {exam_dir}: {e}")

@@ -6,7 +6,7 @@ import os
 import sys
 sys.path.append(os.path.dirname(__file__))
 
-from processors.db_saver import DatabaseSaver
+from processors import DatabaseSaver
 from config.settings import settings
 import json
 

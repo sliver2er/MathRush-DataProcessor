@@ -82,18 +82,18 @@ class DatabaseSaver:
                 raise ValueError(f"Missing required field: {field}")
             validated[field] = problem[field]
         
-        # Optional fields with defaults
+        # Optional fields with defaults (only fields that exist in database)
         validated.update({
             'problem_type': problem.get('problem_type', 'subjective'),
             'choices': problem.get('choices', None),
-            'curriculum': problem.get('curriculum', '2015개정'),
-            'level': problem.get('level', ''),
-            'subject': problem.get('subject', ''),
-            'chapter': problem.get('chapter', ''),
-            'difficulty': problem.get('difficulty', 'medium'),
-            'source_info': problem.get('source_info', {}),
-            'tags': problem.get('tags', []),
-            'images': problem.get('images', []),  # Field for image file paths
+            'explanation': problem.get('explanation', None),
+            'level': problem.get('level', None),
+            'subject': problem.get('subject', None),
+            'chapter': problem.get('chapter', None),
+            'difficulty': problem.get('difficulty', None),
+            'source_info': problem.get('source_info', None),
+            'tags': problem.get('tags', None),
+            'images': problem.get('images', None),
             'created_at': datetime.now().isoformat(),
             'updated_at': datetime.now().isoformat()
         })
@@ -104,13 +104,10 @@ class DatabaseSaver:
             logger.warning(f"Invalid problem_type: {validated['problem_type']}, defaulting to 'subjective'")
             validated['problem_type'] = 'subjective'
         
-        valid_curricula = ['2015개정', '2022개정']
-        if validated['curriculum'] not in valid_curricula:
-            logger.warning(f"Invalid curriculum: {validated['curriculum']}, defaulting to '2015개정'")
-            validated['curriculum'] = '2015개정'
+# Curriculum field removed from database schema
         
         valid_difficulties = ['easy', 'medium', 'hard']
-        if validated['difficulty'] not in valid_difficulties:
+        if validated['difficulty'] is not None and validated['difficulty'] not in valid_difficulties:
             logger.warning(f"Invalid difficulty: {validated['difficulty']}, defaulting to 'medium'")
             validated['difficulty'] = 'medium'
         
@@ -126,18 +123,19 @@ class DatabaseSaver:
             logger.warning("Choices field is not a dictionary, converting to None")
             validated['choices'] = None
         
-        if not isinstance(validated['source_info'], dict):
-            validated['source_info'] = {}
+        if validated['source_info'] is not None and not isinstance(validated['source_info'], dict):
+            validated['source_info'] = None
         
-        if not isinstance(validated['tags'], list):
-            validated['tags'] = []
+        if validated['tags'] is not None and not isinstance(validated['tags'], list):
+            validated['tags'] = None
         
         # Validate images field
-        if not isinstance(validated['images'], list):
-            validated['images'] = []
+        if validated['images'] is not None and not isinstance(validated['images'], list):
+            validated['images'] = None
         
-        # Ensure all image paths are strings
-        validated['images'] = [str(img) for img in validated['images'] if img]
+        # Ensure all image paths are strings if images is not None
+        if validated['images'] is not None:
+            validated['images'] = [str(img) for img in validated['images'] if img]
         
         return validated
     

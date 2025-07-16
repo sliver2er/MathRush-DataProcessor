@@ -34,10 +34,16 @@ class FilenameParser:
         
         # Supported exam name patterns (for directory names)
         self.exam_patterns = [
-            # YYYY-MM-DD_ExamType
+            # YYYY-MM-DD_ExamType_Subject (e.g., 2020-12-03_suneung_가형)
+            r'(?P<year>\d{4})-(?P<month>\d{1,2})-(?P<day>\d{1,2})_(?P<exam_type>[^_]+)_(?P<subject>[^_]+)',
+            
+            # YYYYMMDD_ExamType_Subject
+            r'(?P<year>\d{4})(?P<month>\d{2})(?P<day>\d{2})_(?P<exam_type>[^_]+)_(?P<subject>[^_]+)',
+            
+            # YYYY-MM-DD_ExamType (without subject)
             r'(?P<year>\d{4})-(?P<month>\d{1,2})-(?P<day>\d{1,2})_(?P<exam_type>[^_]+)',
             
-            # YYYYMMDD_ExamType
+            # YYYYMMDD_ExamType (without subject)
             r'(?P<year>\d{4})(?P<month>\d{2})(?P<day>\d{2})_(?P<exam_type>[^_]+)',
             
             # YYYY-MM-DD (exam_type defaults to "exam")
@@ -62,6 +68,80 @@ class FilenameParser:
             '기말고사': 'final_exam',
             'midterm': 'midterm_exam',
             '중간고사': 'midterm_exam'
+        }
+        
+        # Math subject mappings for Korean exams
+        self.subject_mappings = {
+            # 수능/모의고사 - 과거 가형/나형 (2017-2021)
+            '가형': {
+                'subject': '수학 가형',
+                'curriculum': '2015개정',
+                'level': '고3',
+                'topics': ['미적분', '확률과통계', '기하']
+            },
+            '나형': {
+                'subject': '수학 나형', 
+                'curriculum': '2015개정',
+                'level': '고3',
+                'topics': ['수학Ⅰ', '수학Ⅱ', '확률과통계']
+            },
+            # 현재 수능/모의고사 선택과목 (2022~)
+            '미적분': {
+                'subject': '미적분',
+                'curriculum': '2015개정',
+                'level': '고3',
+                'topics': ['미적분']
+            },
+            '기하': {
+                'subject': '기하',
+                'curriculum': '2015개정', 
+                'level': '고3',
+                'topics': ['기하']
+            },
+            '확통': {
+                'subject': '확률과통계',
+                'curriculum': '2015개정',
+                'level': '고3', 
+                'topics': ['확률과통계']
+            },
+            '확률과통계': {
+                'subject': '확률과통계',
+                'curriculum': '2015개정',
+                'level': '고3',
+                'topics': ['확률과통계']
+            },
+            # 기본 과목들 (일반 시험용)
+            '수학상': {
+                'subject': '수학(상)',
+                'curriculum': '2015개정',
+                'level': '고1',
+                'topics': ['수학(상)']
+            },
+            '수학하': {
+                'subject': '수학(하)',
+                'curriculum': '2015개정', 
+                'level': '고1',
+                'topics': ['수학(하)']
+            },
+            '수학1': {
+                'subject': '수학Ⅰ',
+                'curriculum': '2015개정',
+                'level': '고2',
+                'topics': ['수학Ⅰ']
+            },
+            '수학2': {
+                'subject': '수학Ⅱ',
+                'curriculum': '2015개정',
+                'level': '고2', 
+                'topics': ['수학Ⅱ']
+            },
+            # 공통 과목 (2022~ 수능 문제 1-22번)
+            '공통': {
+                'subject': '수학 공통',
+                'curriculum': '2015개정',
+                'level': '고3',
+                'topics': ['수학Ⅰ', '수학Ⅱ']
+            }
         }
     
     def parse_filename(self, filename: str) -> Dict[str, Any]:
@@ -190,13 +270,39 @@ class FilenameParser:
                 exam_type = data.get('exam_type', 'exam').lower()
                 exam_type = self.exam_type_aliases.get(exam_type, exam_type)
                 
-                # Determine curriculum and metadata based on exam type and date
-                curriculum = '2022개정' if year >= 2025 else '2015개정'
+                # Get subject information
+                subject_key = data.get('subject', '').lower()
+                subject_info = self.subject_mappings.get(subject_key, {})
+                
+                # Determine default values based on exam type and subject
+                if subject_info:
+                    # Use subject-specific metadata
+                    curriculum = subject_info.get('curriculum', '2015개정')
+                    level = subject_info.get('level', '고3')
+                    subject = subject_info.get('subject', '수학')
+                    topics = subject_info.get('topics', [])
+                    chapter = topics[0] if topics else ''
+                else:
+                    # Use exam type-based defaults
+                    curriculum = '2022개정' if year >= 2025 else '2015개정'
+                    if exam_type == 'suneung':
+                        level = '고3'
+                        # For 2022+ 수능 without subject specification, default to 공통
+                        if year >= 2022:
+                            subject = '수학 공통'
+                            chapter = '수학Ⅰ'  # Default to 수학Ⅰ for common problems
+                        else:
+                            subject = '수학영역'
+                            chapter = ''
+                    else:
+                        level = '고1'
+                        subject = '수학'
+                        chapter = ''
                 
                 # Map exam type to Korean names
                 exam_type_korean = {
                     'suneung': '수능',
-                    'mock_exam': '모의고사',
+                    'mock_exam': '모의고사', 
                     'school_exam': '학교시험',
                     'monthly_exam': '월례고사',
                     'final_exam': '기말고사',
@@ -210,10 +316,11 @@ class FilenameParser:
                     'exam_month': month,
                     'exam_day': day,
                     'exam_type': exam_type_korean,
+                    'subject_type': subject_key if subject_key else None,  # 가형, 나형, 미적분, etc.
                     'curriculum': curriculum,
-                    'level': '고3' if exam_type == 'suneung' else '고1',
-                    'subject': '수학영역' if exam_type == 'suneung' else '수학',
-                    'chapter': '',
+                    'level': level,
+                    'subject': subject,
+                    'chapter': chapter,
                     'difficulty': 'medium',
                     'is_valid': True
                 }
@@ -230,6 +337,7 @@ class FilenameParser:
             'exam_month': None,
             'exam_day': None,
             'exam_type': 'unknown',
+            'subject_type': None,
             'curriculum': '2015개정',
             'level': '',
             'subject': '수학',
