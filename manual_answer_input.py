@@ -159,7 +159,7 @@ class ManualAnswerInput:
     
     def process_batch_answers(self, exam_dir: str, batch_answers: Dict[int, Dict[str, str]], sequential_mapping: bool = False) -> bool:
         """
-        Process answers from batch input (command line or file).
+        Update existing database records with manual answers.
         
         Args:
             exam_dir: Path to exam directory
@@ -177,21 +177,28 @@ class ManualAnswerInput:
                 print(f"❌ No problems found in {exam_dir}")
                 return False
             
-            # Get exam metadata
+            # Get exam name
             exam_name = problems[0]['exam_name']
-            exam_metadata = self.extract_exam_metadata(exam_name)
             
             print(f"\n📚 Exam: {exam_name}")
-            print(f"📊 Found {len(problems)} problems")
-            print(f"📅 Exam Date: {exam_metadata['exam_date']}")
-            print(f"📖 Subject: {exam_metadata['subject']}")
-            print(f"🎓 Level: {exam_metadata['level']}")
+            print(f"📊 Found {len(problems)} problems in directory")
+            
+            # Find existing records in database
+            print(f"\n🔍 Looking for existing records in database...")
+            existing_records = self.find_existing_records(exam_name)
+            
+            if not existing_records:
+                print(f"❌ No existing records found for exam: {exam_name}")
+                print(f"💡 Run: python simple_processor.py {exam_dir} first")
+                return False
+            
+            print(f"✅ Found {len(existing_records)} existing records")
             
             # Process batch answers
-            problem_records = []
+            updates = []
             
             print(f"\n{'='*50}")
-            print("📝 BATCH ANSWER PROCESSING")
+            print("📝 UPDATING RECORDS WITH ANSWERS")
             print(f"{'='*50}")
             
             # For sequential mapping, map answers to problems in order
@@ -199,96 +206,59 @@ class ManualAnswerInput:
                 answer_keys = sorted(batch_answers.keys())
                 for i, problem in enumerate(problems):
                     problem_num = problem['problem_number']
-                    filename = problem['filename']
                     
                     # Check if we have an answer for this position
                     if i < len(answer_keys):
                         answer_key = answer_keys[i]
                         answer_data = batch_answers[answer_key]
-                        problem_type = answer_data['type']
                         correct_answer = answer_data['answer']
                         
-                        print(f"📄 Problem {problem_num}: {problem_type} → {correct_answer}")
+                        # Check if record exists
+                        if problem_num in existing_records:
+                            record_id = existing_records[problem_num]['id']
+                            updates.append({
+                                'id': record_id,
+                                'problem_number': problem_num,
+                                'correct_answer': correct_answer,
+                                'answer_type': answer_data['type']
+                            })
+                            print(f"📄 Problem {problem_num}: {answer_data['type']} → {correct_answer}")
+                        else:
+                            print(f"⚠️  Problem {problem_num}: No existing record found, skipping")
                     else:
                         print(f"⚠️  Problem {problem_num}: No answer provided, skipping")
-                        continue
-                        
-                    # Create problem record
-                    problem_record = {
-                        'content': f"[Manual Input] Problem {problem_num} from {exam_name}",
-                        'correct_answer': correct_answer,
-                        'problem_type': problem_type,
-                        'choices': None,
-                        'explanation': '',
-                        **exam_metadata,
-                        'source_info': {
-                            'exam_name': exam_name,
-                            'problem_number': problem_num,
-                            'filename': filename,
-                            'file_path': problem['file_path'],
-                            'manual_input': True,
-                            'batch_input': True,
-                            'sequential_mapping': True,
-                            'input_timestamp': datetime.now().isoformat()
-                        },
-                        'tags': ['manual_input', 'batch_input'],
-                        'images': [problem['file_path']]
-                    }
-                    problem_records.append(problem_record)
             else:
                 # Direct mapping by problem number
-                for problem in problems:
-                    problem_num = problem['problem_number']
-                    filename = problem['filename']
-                    
-                    # Check if answer provided for this problem
-                    if problem_num not in batch_answers:
-                        print(f"⚠️  Problem {problem_num}: No answer provided, skipping")
-                        continue
-                    
-                    answer_data = batch_answers[problem_num]
-                    problem_type = answer_data['type']
+                for problem_num, answer_data in batch_answers.items():
                     correct_answer = answer_data['answer']
-                
-                    print(f"📄 Problem {problem_num}: {problem_type} → {correct_answer}")
                     
-                    # Create minimal problem record for database
-                    problem_record = {
-                        'content': f"[Manual Input] Problem {problem_num} from {exam_name}",  # Placeholder
-                        'correct_answer': correct_answer,
-                        'problem_type': problem_type,
-                        'choices': None,  # Will be filled by GPT processing
-                        'explanation': '',  # Not needed per requirements
-                        **exam_metadata,
-                        'source_info': {
-                            'exam_name': exam_name,
+                    # Check if record exists
+                    if problem_num in existing_records:
+                        record_id = existing_records[problem_num]['id']
+                        updates.append({
+                            'id': record_id,
                             'problem_number': problem_num,
-                            'filename': filename,
-                            'file_path': problem['file_path'],
-                            'manual_input': True,
-                            'batch_input': True,
-                            'input_timestamp': datetime.now().isoformat()
-                        },
-                        'tags': ['manual_input', 'batch_input'],
-                        'images': [problem['file_path']]
-                    }
-                    
-                    problem_records.append(problem_record)
+                            'correct_answer': correct_answer,
+                            'answer_type': answer_data['type']
+                        })
+                        print(f"📄 Problem {problem_num}: {answer_data['type']} → {correct_answer}")
+                    else:
+                        print(f"⚠️  Problem {problem_num}: No existing record found, skipping")
             
-            if not problem_records:
-                print("❌ No problems to process")
+            if not updates:
+                print("❌ No records to update")
                 return False
             
-            # Save to database
+            # Update database records
             print(f"\n{'='*50}")
-            print("💾 SAVING TO DATABASE")
+            print("💾 UPDATING DATABASE")
             print(f"{'='*50}")
             
-            results = self.db_saver.bulk_insert_problems(problem_records)
+            results = self.update_existing_records(updates)
             
             # Display results
             print(f"\n📊 Results:")
-            print(f"  ✅ Successfully saved: {results['successful']}/{results['total']} problems")
+            print(f"  ✅ Successfully updated: {results['successful']}/{results['total']} problems")
             
             if results['failed'] > 0:
                 print(f"  ❌ Failed: {results['failed']} problems")
@@ -306,7 +276,7 @@ class ManualAnswerInput:
     
     def input_answers_for_exam(self, exam_dir: str) -> bool:
         """
-        Interactive input of answers for entire exam.
+        Interactive input of answers for existing exam records.
         
         Args:
             exam_dir: Path to exam directory
@@ -322,33 +292,44 @@ class ManualAnswerInput:
                 print(f"❌ No problems found in {exam_dir}")
                 return False
             
-            # Get exam metadata
+            # Get exam name
             exam_name = problems[0]['exam_name']
-            exam_metadata = self.extract_exam_metadata(exam_name)
             
             print(f"\n📚 Exam: {exam_name}")
-            print(f"📊 Found {len(problems)} problems")
-            print(f"📅 Exam Date: {exam_metadata['exam_date']}")
-            print(f"📖 Subject: {exam_metadata['subject']}")
-            print(f"🎓 Level: {exam_metadata['level']}")
+            print(f"📊 Found {len(problems)} problems in directory")
+            
+            # Find existing records in database
+            print(f"\n🔍 Looking for existing records in database...")
+            existing_records = self.find_existing_records(exam_name)
+            
+            if not existing_records:
+                print(f"❌ No existing records found for exam: {exam_name}")
+                print(f"💡 Run: python simple_processor.py {exam_dir} first")
+                return False
+            
+            print(f"✅ Found {len(existing_records)} existing records")
             
             # Confirm before proceeding
-            confirm = input(f"\n📝 Ready to input answers for {len(problems)} problems? (y/N): ").strip().lower()
+            confirm = input(f"\n📝 Ready to input answers for {len(existing_records)} existing records? (y/N): ").strip().lower()
             if confirm != 'y':
                 print("❌ Operation cancelled")
                 return False
             
-            # Input answers for each problem
-            problem_records = []
+            # Input answers for each existing record
+            updates = []
             print(f"\n{'='*50}")
-            print("📝 ANSWER INPUT PHASE")
+            print("📝 INTERACTIVE ANSWER INPUT")
             print(f"{'='*50}")
             
-            for problem in problems:
-                problem_num = problem['problem_number']
-                filename = problem['filename']
+            for problem_num in sorted(existing_records.keys()):
+                record = existing_records[problem_num]
+                record_id = record['id']
                 
-                print(f"\n📄 Processing: {filename}")
+                # Show problem content preview
+                content_preview = record.get('content', '')[:100] + "..."
+                print(f"\n📄 Problem {problem_num}:")
+                print(f"   Content: {content_preview}")
+                print(f"   Current answer: {record.get('correct_answer', '(empty)')}")
                 
                 # Get problem type
                 problem_type = self.get_problem_type_input(problem_num)
@@ -356,40 +337,29 @@ class ManualAnswerInput:
                 # Get correct answer
                 correct_answer = self.get_answer_input(problem_num, problem_type)
                 
-                # Create minimal problem record for database
-                problem_record = {
-                    'content': f"[Manual Input] Problem {problem_num} from {exam_name}",  # Placeholder
+                updates.append({
+                    'id': record_id,
+                    'problem_number': problem_num,
                     'correct_answer': correct_answer,
-                    'problem_type': problem_type,
-                    'choices': None,  # Will be filled by GPT processing
-                    'explanation': '',  # Not needed per requirements
-                    **exam_metadata,
-                    'source_info': {
-                        'exam_name': exam_name,
-                        'problem_number': problem_num,
-                        'filename': filename,
-                        'file_path': problem['file_path'],
-                        'manual_input': True,
-                        'input_timestamp': datetime.now().isoformat()
-                    },
-                    'tags': ['manual_input'],
-                    'images': [problem['file_path']]
-                }
-                
-                problem_records.append(problem_record)
+                    'answer_type': problem_type
+                })
                 
                 print(f"  ✅ Problem {problem_num}: {problem_type} → {correct_answer}")
             
-            # Save to database
+            if not updates:
+                print("❌ No updates to process")
+                return False
+            
+            # Update database records
             print(f"\n{'='*50}")
-            print("💾 SAVING TO DATABASE")
+            print("💾 UPDATING DATABASE")
             print(f"{'='*50}")
             
-            results = self.db_saver.bulk_insert_problems(problem_records)
+            results = self.update_existing_records(updates)
             
             # Display results
             print(f"\n📊 Results:")
-            print(f"  ✅ Successfully saved: {results['successful']}/{results['total']} problems")
+            print(f"  ✅ Successfully updated: {results['successful']}/{results['total']} problems")
             
             if results['failed'] > 0:
                 print(f"  ❌ Failed: {results['failed']} problems")
@@ -428,6 +398,92 @@ class ManualAnswerInput:
                     exam_dirs.append(item.name)
         
         return sorted(exam_dirs)
+    
+    def find_existing_records(self, exam_name: str) -> Dict[int, Dict[str, any]]:
+        """
+        Find existing records for this exam in the database.
+        
+        Args:
+            exam_name: Name of the exam
+            
+        Returns:
+            Dictionary mapping problem numbers to database records
+        """
+        try:
+            # Query database for records with this exam name
+            result = self.db_saver.client.table(self.db_saver.table_name)\
+                .select("*")\
+                .eq("source_info->>exam_name", exam_name)\
+                .execute()
+            
+            if not result.data:
+                logger.warning(f"No existing records found for exam: {exam_name}")
+                return {}
+            
+            # Organize by problem number
+            existing_records = {}
+            for record in result.data:
+                source_info = record.get('source_info', {})
+                problem_number = source_info.get('problem_number')
+                
+                if problem_number:
+                    existing_records[problem_number] = record
+            
+            logger.info(f"Found existing records for {len(existing_records)} problems in exam: {exam_name}")
+            return existing_records
+            
+        except Exception as e:
+            logger.error(f"Error querying existing records for {exam_name}: {e}")
+            return {}
+    
+    def update_existing_records(self, updates: List[Dict[str, any]]) -> Dict[str, int]:
+        """
+        Update existing records with manual answers.
+        
+        Args:
+            updates: List of update data with id, problem_number, correct_answer, etc.
+            
+        Returns:
+            Dictionary with update results
+        """
+        results = {
+            'total': len(updates),
+            'successful': 0,
+            'failed': 0,
+            'errors': []
+        }
+        
+        for update in updates:
+            try:
+                record_id = update['id']
+                update_data = {
+                    'correct_answer': update['correct_answer'],
+                    'updated_at': datetime.now().isoformat()
+                }
+                
+                # Add manual answer tags
+                result = self.db_saver.client.table(self.db_saver.table_name)\
+                    .update(update_data)\
+                    .eq('id', record_id)\
+                    .execute()
+                
+                if result.data:
+                    results['successful'] += 1
+                    logger.debug(f"Updated record ID {record_id} with answer: {update['correct_answer']}")
+                else:
+                    results['failed'] += 1
+                    error_msg = f"Problem {update['problem_number']}: Update returned no data"
+                    results['errors'].append(error_msg)
+                    logger.error(error_msg)
+                    
+            except Exception as e:
+                results['failed'] += 1
+                error_msg = f"Problem {update['problem_number']}: {str(e)}"
+                results['errors'].append(error_msg)
+                logger.error(f"Error updating record {record_id}: {e}")
+        
+        logger.info(f"Update completed: {results['successful']}/{results['total']} successful")
+        return results
     
     def parse_answers_input(self, answers_input: str, format_type: str = 'comma') -> Dict[int, Dict[str, str]]:
         """
@@ -550,13 +606,13 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Interactive mode (default)
+  # Interactive mode (updates existing records)
   python manual_answer_input.py input/2020-12-03_suneung_가형/
   
-  # Single problem input
+  # Single problem answer update
   python manual_answer_input.py input/2020-12-03_suneung_가형/ --problem 27 --answer 5 --type subjective
   
-  # Comma-separated answers (assumes problem order 1,2,3...)
+  # Comma-separated answers (updates existing records in order)
   python manual_answer_input.py input/2020-12-03_suneung_가형/ --answers "1,2,3,4,5"
   
   # From JSON file
@@ -564,9 +620,12 @@ Examples:
   
   # List available exams
   python manual_answer_input.py input/ --list
+
+Workflow:
+  1. Run simple_processor.py to extract content and create records
+  2. Run manual_answer_input.py to add answers to existing records
   
-  # Input answers for exam by name (searches in input/)
-  python manual_answer_input.py --exam 2020-12-03_suneung_가형 --answers "1,2,3,4,5"
+Note: This tool now UPDATES existing records instead of creating new ones.
 """
     )
     

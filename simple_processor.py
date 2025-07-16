@@ -104,50 +104,13 @@ class SimpleProcessor:
         
         return sorted_problems
     
-    def find_manual_answers_in_db(self, exam_name: str) -> Dict[int, Dict[str, any]]:
+    def process_problem_images(self, problems: List[Dict], exam_metadata: Dict) -> Tuple[List[Dict], List[Dict]]:
         """
-        Find manually input answers for this exam in the database.
-        
-        Args:
-            exam_name: Name of the exam
-            
-        Returns:
-            Dictionary mapping problem numbers to database records
-        """
-        try:
-            # Query database for records with this exam name
-            result = self.db_saver.client.table(self.db_saver.table_name)\
-                .select("*")\
-                .eq("source_info->>exam_name", exam_name)\
-                .execute()
-            
-            if not result.data:
-                logger.warning(f"No manual answers found for exam: {exam_name}")
-                return {}
-            
-            # Organize by problem number
-            manual_answers = {}
-            for record in result.data:
-                source_info = record.get('source_info', {})
-                problem_number = source_info.get('problem_number')
-                
-                if problem_number:
-                    manual_answers[problem_number] = record
-            
-            logger.info(f"Found manual answers for {len(manual_answers)} problems in exam: {exam_name}")
-            return manual_answers
-            
-        except Exception as e:
-            logger.error(f"Error querying manual answers for {exam_name}: {e}")
-            return {}
-    
-    def process_problem_images(self, problems: List[Dict], manual_answers: Dict[int, Dict]) -> Tuple[List[Dict], List[Dict]]:
-        """
-        Process problem images through GPT extraction.
+        Process problem images through GPT extraction and create database records.
         
         Args:
             problems: List of problem data from directory scan
-            manual_answers: Manual answers from database
+            exam_metadata: Exam metadata for all problems
             
         Returns:
             Tuple of (processed_problems, failed_problems)
@@ -163,36 +126,38 @@ class SimpleProcessor:
             try:
                 logger.info(f"Processing Problem {problem_num}: {os.path.basename(problem_image)}")
                 
-                # Extract content using lightweight GPT extractor
+                # Extract content using GPT extractor
                 extracted_data = self.gpt_extractor.extract_from_image(
                     problem_image, 
                     math_content_images if math_content_images else None
                 )
                 
-                # Get manual answer data if available
-                manual_data = manual_answers.get(problem_num, {})
-                
-                # Combine extracted content with manual answer
-                combined_data = {
+                # Create new record with GPT content (no manual answers yet)
+                problem_record = {
                     # GPT extracted fields
                     'content': extracted_data.get('content', f'[Extraction Failed] Problem {problem_num}'),
                     'problem_type': extracted_data.get('problem_type', 'subjective'),
                     'choices': extracted_data.get('choices'),
                     
-                    # Manual fields (from existing DB record)
-                    'correct_answer': manual_data.get('correct_answer', ''),
-                    'explanation': '',  # Not needed per requirements
+                    # Empty answer fields (to be filled later by manual_answer_input.py)
+                    'correct_answer': '',
+                    'explanation': '',
                     
-                    # Metadata fields (only fields that exist in database)
-                    'level': manual_data.get('level', '고3'),
-                    'subject': manual_data.get('subject', '수학영역'),
-                    'chapter': manual_data.get('chapter', ''),
-                    'difficulty': manual_data.get('difficulty', 'medium'),
-                    'tags': manual_data.get('tags', []),
+                    # Metadata fields from exam metadata
+                    'level': exam_metadata.get('level', '고3'),
+                    'subject': exam_metadata.get('subject', '수학영역'),
+                    'chapter': exam_metadata.get('chapter', ''),
+                    'difficulty': exam_metadata.get('difficulty', 'medium'),
+                    'tags': ['gpt_extracted'],
                     
                     # Source and image info
                     'source_info': {
-                        **manual_data.get('source_info', {}),
+                        'exam_name': problem['exam_name'],
+                        'problem_number': problem_num,
+                        'exam_type': exam_metadata.get('exam_type', '수능'),
+                        'exam_date': exam_metadata.get('exam_date', ''),
+                        'filename': os.path.basename(problem_image),
+                        'file_path': problem_image,
                         'problem_image': problem_image,
                         'math_content_images': math_content_images,
                         'gpt_processed': True,
@@ -201,14 +166,7 @@ class SimpleProcessor:
                     'images': [problem_image] + math_content_images
                 }
                 
-                # Add database ID if updating existing record
-                if manual_data.get('id'):
-                    combined_data['id'] = manual_data['id']
-                    combined_data['update_mode'] = True
-                else:
-                    combined_data['update_mode'] = False
-                
-                processed_problems.append(combined_data)
+                processed_problems.append(problem_record)
                 
                 logger.info(f"  ✅ Problem {problem_num}: {extracted_data.get('problem_type', 'unknown')} - Content: {str(extracted_data.get('content', ''))[:50]}...")
                 
@@ -224,64 +182,33 @@ class SimpleProcessor:
         
         return processed_problems, failed_problems
     
-    def update_database(self, processed_problems: List[Dict]) -> Dict[str, int]:
+    def insert_problems_to_database(self, processed_problems: List[Dict]) -> Dict[str, int]:
         """
-        Update database with processed problems.
+        Insert new problem records to database.
         
         Args:
             processed_problems: List of processed problem records
             
         Returns:
-            Dictionary with update statistics
+            Dictionary with insertion statistics
         """
         stats = {
-            'updated': 0,
             'inserted': 0,
             'failed': 0,
             'total': len(processed_problems)
         }
         
-        for problem in processed_problems:
-            try:
-                if problem.get('update_mode') and problem.get('id'):
-                    # Update existing record
-                    record_id = problem.pop('id')
-                    problem.pop('update_mode', None)
-                    
-                    # Update database record
-                    result = self.db_saver.client.table(self.db_saver.table_name)\
-                        .update(problem)\
-                        .eq('id', record_id)\
-                        .execute()
-                    
-                    if result.data:
-                        stats['updated'] += 1
-                        logger.debug(f"Updated record ID {record_id}")
-                    else:
-                        stats['failed'] += 1
-                        logger.error(f"Failed to update record ID {record_id}")
-                        
-                else:
-                    # Insert new record
-                    problem.pop('update_mode', None)
-                    result = self.db_saver.insert_problem(problem)
-                    
-                    if result:
-                        stats['inserted'] += 1
-                        logger.debug(f"Inserted new record ID {result.get('id')}")
-                    else:
-                        stats['failed'] += 1
-                        logger.error("Failed to insert new record")
-                        
-            except Exception as e:
-                stats['failed'] += 1
-                logger.error(f"Database operation failed: {e}")
+        # Use bulk insert for efficiency
+        results = self.db_saver.bulk_insert_problems(processed_problems)
+        
+        stats['inserted'] = results['successful']
+        stats['failed'] = results['failed']
         
         return stats
     
     def process_exam_directory(self, exam_dir: str) -> bool:
         """
-        Process entire exam directory.
+        Process entire exam directory and create database records with GPT content.
         
         Args:
             exam_dir: Path to exam directory
@@ -308,25 +235,18 @@ class SimpleProcessor:
             
             print(f"✅ Found {len(problems)} problems")
             
-            # Step 2: Find manual answers in database
-            print("\n🔍 STEP 2: Looking for manual answers in database...")
-            manual_answers = self.find_manual_answers_in_db(exam_name)
-            
-            if not manual_answers:
-                print(f"⚠️  No manual answers found. Run: python manual_answer_input.py {exam_dir}")
-                proceed = input("Continue without manual answers? (y/N): ").strip().lower()
-                if proceed != 'y':
-                    return False
-            else:
-                print(f"✅ Found manual answers for {len(manual_answers)} problems")
+            # Step 2: Extract exam metadata
+            print("\n📋 STEP 2: Extracting exam metadata...")
+            exam_metadata = self.filename_parser.parse_exam_filename(exam_name)
+            print(f"✅ Exam metadata: {exam_metadata['exam_type']} ({exam_metadata['exam_date']})")
             
             # Step 3: Process images through GPT
             print("\n🤖 STEP 3: Processing images through GPT...")
-            processed_problems, failed_problems = self.process_problem_images(problems, manual_answers)
+            processed_problems, failed_problems = self.process_problem_images(problems, exam_metadata)
             
-            # Step 4: Update database
-            print("\n💾 STEP 4: Updating database...")
-            stats = self.update_database(processed_problems)
+            # Step 4: Insert to database
+            print("\n💾 STEP 4: Inserting records to database...")
+            stats = self.insert_problems_to_database(processed_problems)
             
             # Add failed problems to stats
             stats['processing_failed'] = len(failed_problems)
@@ -335,7 +255,6 @@ class SimpleProcessor:
             print(f"\n{'='*60}")
             print(f"📊 PROCESSING COMPLETE")
             print(f"{'='*60}")
-            print(f"✅ Updated records: {stats['updated']}")
             print(f"➕ New records: {stats['inserted']}")
             print(f"❌ Database failures: {stats['failed']}")
             print(f"🔄 Processing failures: {stats['processing_failed']}")
@@ -348,8 +267,10 @@ class SimpleProcessor:
                     print(f"   Problem {failed['problem_number']}: {failed['error']}")
             
             total_failures = stats['failed'] + stats['processing_failed']
-            success_rate = (stats['updated'] + stats['inserted']) / len(problems) * 100
+            success_rate = stats['inserted'] / len(problems) * 100
             print(f"📊 Success rate: {success_rate:.1f}%")
+            
+            print(f"\n💡 Next step: Run manual_answer_input.py to add answers to these records")
             
             return total_failures == 0
             
@@ -362,18 +283,22 @@ class SimpleProcessor:
 def main():
     """Main CLI function."""
     parser = argparse.ArgumentParser(
-        description="Simple Image Processor for MathRush DataProcessor",
+        description="Simple Image Processor for MathRush DataProcessor - Extracts content from images and creates database records",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Process specific exam directory
-  python simple_processor.py input/2020-12-03_suneung/
+  # Process specific exam directory (creates records with GPT content)
+  python simple_processor.py input/2020-12-03_suneung_가형/
   
   # Process with verbose logging
-  python simple_processor.py input/2020-12-03_suneung/ --verbose
+  python simple_processor.py input/2020-12-03_suneung_가형/ --verbose
   
   # Process multiple exams in input directory
   python simple_processor.py input/ --recursive
+
+Workflow:
+  1. Run simple_processor.py to extract content and create records
+  2. Run manual_answer_input.py to add answers to existing records
 """
     )
     
