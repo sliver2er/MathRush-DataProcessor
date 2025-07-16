@@ -3,79 +3,77 @@
 ## 📚 프로젝트 개요
 **GitHub**: https://github.com/sliver2er/MathRush-DataProcessor
 
-MathRush 프로젝트용 수학 문제 PDF 자동 추출 및 라벨링 시스템입니다. GPT-4o-mini를 활용하여 PDF 형태의 수학 문제집을 구조화된 데이터로 변환합니다.
+MathRush 프로젝트용 수학 문제 **수동 처리** 및 라벨링 시스템입니다. GPT-4o-mini를 활용하여 수동으로 분할된 문제 이미지를 구조화된 데이터로 변환합니다.
 
 ## 🎯 현재 목표
-- **메인 목표**: PDF 수학 문제 → Supabase DB 자동 저장 시스템 구축
+- **메인 목표**: 수동 분할된 수학 문제 이미지 → Supabase DB 저장 시스템
 - **예상 작업량**: 1,000-2,000문제
-- **예상 비용**: $5-20 (GPT-4o-mini 기준)
-- **예상 소요시간**: 2-5시간 (자동화 완료 후)
+- **예상 비용**: $3-10 (GPT-4o-mini 기준, 설명 추출 제외)
+- **예상 소요시간**: 1-2시간 (수동 답안 입력 + 자동 내용 추출)
 
-## 📁 프로젝트 구조
+## 📁 프로젝트 구조 (간소화)
 ```
 MathRush-DataProcessor/
+├── manual_answer_input.py      # 수동 답안 입력 유틸리티
+├── simple_processor.py         # 간단한 이미지 처리기
+├── lightweight_gpt_extractor.py # 경량 GPT 추출기
 ├── processors/
-│   ├── pdf_converter.py    # PDF → 이미지 변환
-│   ├── gpt_extractor.py    # GPT 문제 추출
-│   ├── math_processor.py   # 통합 처리 파이프라인
-│   └── db_saver.py         # 데이터베이스 저장
+│   ├── gpt_extractor.py        # 기존 GPT 추출기 (참고용)
+│   └── db_saver.py             # 데이터베이스 저장
 ├── config/
-│   └── settings.py         # 설정 관리
+│   └── settings.py             # 설정 관리
 ├── utils/
-│   ├── filename_parser.py  # 파일명 파싱
-│   ├── image_extractor.py  # 이미지 추출
-│   ├── math_content_extractor.py  # 수학 내용 추출
-│   ├── problem_segmenter.py  # 문제 분할
-│   └── solution_parser.py  # 해답 파싱
-├── samples/                # 테스트용 PDF 샘플
-├── output/                 # 처리 결과물
-│   ├── images/            # 추출된 이미지
-│   └── processed_images/  # 처리된 이미지
-└── temp_new_process_method.py  # 임시 처리 방법
+│   └── filename_parser.py      # 파일명 파싱
+├── input/                      # 수동 분할된 문제 이미지
+└── samples/                    # 테스트용 PDF 샘플
 ```
 
-## 🔄 처리 파이프라인
+## 🔄 처리 파이프라인 (간소화)
 
-1. **PDF → 이미지 변환** (pdf_converter.py)
-   - pdf2image 라이브러리 사용
-   - 고해상도 이미지로 변환 (problems/solutions 분리)
+### **단계 1: 수동 준비 작업** (사용자)
+1. **문제 이미지 분할**
+   - PDF에서 수동으로 개별 문제 이미지 추출
+   - 파일명 형식: `{exam_name}_problem_{number:02d}.png`
+   - 수학 내용 이미지: `{exam_name}_problem_{number:02d}_diagram.png`
 
-2. **이미지에서 문제별 추출** (image_extractor.py)
-   - PDF 페이지에서 개별 문제 이미지 추출
-   - 그래프, 도표, 도형 등 시각적 요소 분리
-   - 문제별 이미지 파일 생성
+2. **디렉토리 구성**
+   ```
+   input/2020-12-03_suneung/
+   ├── 2020-12-03_suneung_problem_01.png
+   ├── 2020-12-03_suneung_problem_01_diagram.png
+   ├── 2020-12-03_suneung_problem_02.png
+   └── ...
+   ```
 
-3. **문제 분할 및 파싱** (problem_segmenter.py)
-   - 페이지 단위 이미지를 개별 문제로 분할
-   - 문제 번호 및 구조 인식
-   - 객관식/주관식 문제 타입 분류
+### **단계 2: 수동 답안 입력** (manual_answer_input.py)
+1. **답안 입력 유틸리티 실행**
+   ```bash
+   python manual_answer_input.py input/2020-12-03_suneung/
+   ```
+2. **대화식 답안 입력**
+   - 문제 유형 선택 (객관식/주관식)
+   - 정답 입력
+   - 데이터베이스에 즉시 저장
 
-4. **GPT 문제 추출** (gpt_extractor.py)
-   - 문제와 해답을 별도 처리
-   - 교육과정 기준 프롬프트 제공
-   - JSON 형식으로 구조화된 데이터 반환
+### **단계 3: 자동 내용 추출** (simple_processor.py)
+1. **이미지 처리 실행**
+   ```bash
+   python simple_processor.py input/2020-12-03_suneung/
+   ```
+2. **GPT 내용 추출** (lightweight_gpt_extractor.py)
+   - 문제 내용만 추출 (설명 제외)
+   - 객관식 선택지 추출
+   - 수동 답안과 자동 결합
 
-5. **문제-해답 매칭** (math_processor.py)
-   - 문제와 해답을 번호 기준으로 매칭
-   - 누락된 문제/해답 탐지 및 처리
-   - 완성된 문제 세트 생성
+3. **데이터베이스 업데이트** (db_saver.py)
+   - 기존 답안 레코드에 내용 추가
+   - 완성된 문제 데이터 저장
 
-6. **데이터 검증 및 정제** (db_saver.py)
-   - 필수 필드 체크
-   - 중복 문제 탐지
-   - 데이터 형식 정규화
-
-7. **Supabase DB 저장** (db_saver.py)
-   - problems 테이블에 일괄 삽입
-   - 이미지 파일 경로 저장
-   - 성공/실패 로그 기록
-
-## 🛠️ 기술 스택
-- **AI 모델**: GPT-4o-mini (OpenAI)
-- **PDF 처리**: pdf2image
+## 🛠️ 기술 스택 (간소화)
+- **AI 모델**: GPT-4o-mini (OpenAI) - 내용 추출만
 - **데이터베이스**: Supabase (PostgreSQL)
 - **개발 환경**: Python 3.8+
-- **이미지 저장**: Supabase Storage
+- **이미지 처리**: 수동 분할 + GPT Vision
 
 ## 📊 데이터베이스 스키마 (Supabase)
 ```sql
@@ -185,30 +183,33 @@ MathRush-DataProcessor/
 - 통합 테스트 수행
 - 성능 최적화
 
-## 🔧 실행 방법
+## 🔧 실행 방법 (간소화)
 ```bash
-# 단일 PDF 쌍 처리
-python processors/math_processor.py --problems samples/2020-12-03_suneung_problems.pdf --solutions samples/2020-12-03_suneung_solutions.pdf
+# 1단계: 수동 답안 입력
+python manual_answer_input.py input/2020-12-03_suneung/
 
-# 디렉토리 전체 PDF 쌍 처리
-python processors/math_processor.py --directory samples/
+# 2단계: 이미지 내용 처리
+python simple_processor.py input/2020-12-03_suneung/
 
-# 동시 처리 개수 조정 (기본값: 3)
-python processors/math_processor.py --directory samples/ --concurrent 5
+# 여러 시험 일괄 처리
+python simple_processor.py input/ --recursive
 
-# 디버그 모드 (이미지 및 JSON 저장)
-python processors/math_processor.py --problems file1.pdf --solutions file2.pdf --save-images --save-json
+# 사용 가능한 시험 목록 보기
+python manual_answer_input.py input/ --list
 
 # 데이터베이스 연결 테스트
-python processors/math_processor.py --test-db
+python check_db.py
+
+# 개별 이미지 테스트 (디버그용)
+python lightweight_gpt_extractor.py path/to/problem.png --verbose
 ```
 
-## 💡 다음 우선순위 작업
-1. **환경 설정 완료** - API 키, Supabase 연결
-2. **프롬프트 테스트** - 소규모 샘플로 정확도 검증
-3. **PDF 변환 로직** - pdf2image 구현
-4. **GPT 추출 로직** - OpenAI API 연동
-5. **데이터베이스 저장** - Supabase 연동
+## 💡 다음 우선순위 작업 (간소화)
+1. **수동 이미지 분할** - 시험 문제를 개별 이미지로 분할
+2. **답안 입력 테스트** - manual_answer_input.py로 답안 입력
+3. **내용 추출 테스트** - simple_processor.py로 GPT 추출
+4. **데이터 검증** - 데이터베이스에 올바르게 저장되는지 확인
+5. **대량 처리** - 전체 문제집 처리
 
 ## 📞 협업 시 참고사항
 - **코드 리뷰**: 모든 핵심 로직은 Claude와 함께 검토

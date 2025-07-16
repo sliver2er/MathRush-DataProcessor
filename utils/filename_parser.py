@@ -17,7 +17,7 @@ class FilenameParser:
     
     def __init__(self):
         """Initialize filename parser with supported patterns."""
-        # Supported filename patterns
+        # Supported filename patterns for PDF files
         self.patterns = [
             # YYYY-MM-DD_ExamType_problems.pdf
             r'(?P<year>\d{4})-(?P<month>\d{1,2})-(?P<day>\d{1,2})_(?P<exam_type>[^_]+)_(?P<file_type>problems|solutions)\.pdf',
@@ -30,6 +30,21 @@ class FilenameParser:
             
             # YYYYMMDD_problems.pdf
             r'(?P<year>\d{4})(?P<month>\d{2})(?P<day>\d{2})_(?P<file_type>problems|solutions)\.pdf'
+        ]
+        
+        # Supported exam name patterns (for directory names)
+        self.exam_patterns = [
+            # YYYY-MM-DD_ExamType
+            r'(?P<year>\d{4})-(?P<month>\d{1,2})-(?P<day>\d{1,2})_(?P<exam_type>[^_]+)',
+            
+            # YYYYMMDD_ExamType
+            r'(?P<year>\d{4})(?P<month>\d{2})(?P<day>\d{2})_(?P<exam_type>[^_]+)',
+            
+            # YYYY-MM-DD (exam_type defaults to "exam")
+            r'(?P<year>\d{4})-(?P<month>\d{1,2})-(?P<day>\d{1,2})',
+            
+            # YYYYMMDD
+            r'(?P<year>\d{4})(?P<month>\d{2})(?P<day>\d{2})'
         ]
         
         # Common exam type mappings
@@ -138,6 +153,91 @@ class FilenameParser:
             return name[:-10]  # Remove '_solutions'
         
         return name
+    
+    def parse_exam_filename(self, exam_name: str) -> Dict[str, Any]:
+        """
+        Parse exam information from exam directory name.
+        
+        Args:
+            exam_name: Exam directory name (e.g., "2020-12-03_suneung")
+            
+        Returns:
+            Dictionary with exam information
+        """
+        # Remove path if present
+        basename = os.path.basename(exam_name)
+        
+        # Try each exam pattern
+        for pattern in self.exam_patterns:
+            match = re.match(pattern, basename, re.IGNORECASE)
+            if match:
+                data = match.groupdict()
+                
+                # Convert to integers
+                year = int(data['year'])
+                month = int(data['month'])
+                day = int(data['day'])
+                
+                # Validate date
+                try:
+                    exam_date = datetime(year, month, day)
+                    exam_date_str = exam_date.strftime('%Y-%m-%d')
+                except ValueError as e:
+                    logger.warning(f"Invalid date in exam name {exam_name}: {e}")
+                    exam_date_str = f"{year:04d}-{month:02d}-{day:02d}"
+                
+                # Normalize exam type
+                exam_type = data.get('exam_type', 'exam').lower()
+                exam_type = self.exam_type_aliases.get(exam_type, exam_type)
+                
+                # Determine curriculum and metadata based on exam type and date
+                curriculum = '2022개정' if year >= 2025 else '2015개정'
+                
+                # Map exam type to Korean names
+                exam_type_korean = {
+                    'suneung': '수능',
+                    'mock_exam': '모의고사',
+                    'school_exam': '학교시험',
+                    'monthly_exam': '월례고사',
+                    'final_exam': '기말고사',
+                    'midterm_exam': '중간고사'
+                }.get(exam_type, exam_type)
+                
+                result = {
+                    'original_name': exam_name,
+                    'exam_date': exam_date_str,
+                    'exam_year': year,
+                    'exam_month': month,
+                    'exam_day': day,
+                    'exam_type': exam_type_korean,
+                    'curriculum': curriculum,
+                    'level': '고3' if exam_type == 'suneung' else '고1',
+                    'subject': '수학영역' if exam_type == 'suneung' else '수학',
+                    'chapter': '',
+                    'difficulty': 'medium',
+                    'is_valid': True
+                }
+                
+                logger.debug(f"Parsed exam name {exam_name}: {result}")
+                return result
+        
+        # No pattern matched
+        logger.warning(f"Could not parse exam name: {exam_name}")
+        return {
+            'original_name': exam_name,
+            'exam_date': None,
+            'exam_year': None,
+            'exam_month': None,
+            'exam_day': None,
+            'exam_type': 'unknown',
+            'curriculum': '2015개정',
+            'level': '',
+            'subject': '수학',
+            'chapter': '',
+            'difficulty': 'medium',
+            'is_valid': False,
+            'error': 'No matching pattern found'
+        }
     
     def find_pdf_pairs(self, directory: str) -> List[Tuple[str, str, Dict[str, Any]]]:
         """

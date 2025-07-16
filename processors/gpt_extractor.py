@@ -314,6 +314,63 @@ class GPTExtractor:
 
 이제 이미지를 분석하여 해답과 해설을 추출해주세요."""
 
+    def extract_problems_from_image(self, problem_image_path: str, math_content_images: List[str] = None) -> Dict[str, Any]:
+        """
+        Extract problems from an image (alias for backward compatibility).
+        """
+        return self.extract_problem_from_image(problem_image_path, math_content_images)
+    
+    def extract_solutions_from_image(self, solution_image_path: str, math_content_images: List[str] = None) -> Dict[str, Any]:
+        """
+        Extract solutions from an image using solution-specific prompts.
+        """
+        try:
+            logger.info(f"Extracting solutions from: {solution_image_path}")
+            
+            # Encode main solution image
+            base64_image = self.encode_image(solution_image_path)
+            
+            # Prepare content list for solutions
+            content_list = [
+                {
+                    "type": "text",
+                    "text": "이 수학 문제 해답지에서 정답과 해설을 JSON 형식으로 추출해주세요."
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/png;base64,{base64_image}"
+                    }
+                }
+            ]
+            
+            # Make API call for solutions
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": content_list
+                    }
+                ],
+                max_tokens=self.max_tokens
+            )
+            
+            # Parse response
+            content = response.choices[0].message.content
+            result = self.parse_gpt_response(content)
+            
+            if result:
+                logger.info(f"Successfully extracted solutions from {solution_image_path}")
+                return result
+            else:
+                logger.warning(f"Failed to parse solutions from {solution_image_path}")
+                return {"solutions": []}
+                
+        except Exception as e:
+            logger.error(f"Error extracting solutions from {solution_image_path}: {e}")
+            return {"solutions": []}
+    
     def extract_problem_from_image(self, problem_image_path: str, math_content_images: List[str] = None) -> Dict[str, Any]:
         """
         Extract a single problem from an individual problem image.
