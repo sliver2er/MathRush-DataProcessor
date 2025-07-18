@@ -163,8 +163,13 @@ class SimpleProcessor:
                 # Extract content using GPT extractor
                 extracted_data = self.gpt_extractor.extract_from_image(
                     problem_image, 
-                    math_content_images if math_content_images else None
+                    math_content_images if math_content_images else None,
+                    problem_number=problem_num
                 )
+                
+                # Check if extraction failed
+                if extracted_data.get('extraction_error', False):
+                    raise Exception(f"GPT extraction failed: {extracted_data.get('content', 'Unknown error')}")
                 
                 # Create new record with GPT content (no manual answers yet)
                 problem_record = {
@@ -182,6 +187,7 @@ class SimpleProcessor:
                     'subject': exam_metadata.get('subject', '수학영역'),
                     'chapter': exam_metadata.get('chapter', ''),
                     'difficulty': exam_metadata.get('difficulty', 'medium'),
+                    'correct_rate': None,  # For future difficulty determination based on answer rates
                     'tags': ['gpt_extracted'],
                     
                     # Source and image info
@@ -202,10 +208,12 @@ class SimpleProcessor:
                 
                 processed_problems.append(problem_record)
                 
-                logger.info(f"  ✅ Problem {problem_num}: {extracted_data.get('problem_type', 'unknown')} - Content: {str(extracted_data.get('content', ''))[:50]}...")
+                # Show success with more details
+                content_preview = str(extracted_data.get('content', ''))[:50].replace('\n', ' ')
+                logger.info(f"  ✅ SUCCESS Problem {problem_num}: {extracted_data.get('problem_type', 'unknown')} - {content_preview}...")
                 
             except Exception as e:
-                logger.error(f"  ❌ Failed to process Problem {problem_num}: {e}")
+                logger.error(f"  ❌ FAILED Problem {problem_num}: {e}")
                 # Track failed problems separately
                 failed_problems.append({
                     'problem_number': problem_num,
@@ -367,19 +375,22 @@ class SimpleProcessor:
             print(f"\n{'='*60}")
             print(f"📊 PROCESSING COMPLETE")
             print(f"{'='*60}")
-            print(f"➕ New records: {stats['inserted']}")
+            print(f"✅ Successful extractions: {stats['inserted']}")
             print(f"❌ Database failures: {stats['failed']}")
-            print(f"🔄 Processing failures: {stats['processing_failed']}")
-            print(f"📈 Total processed: {stats['total']}")
+            print(f"🔄 Extraction failures: {stats['processing_failed']}")
+            print(f"📈 Total attempted: {len(problems)}")
             
             # Show failed problems if any
             if failed_problems:
-                print(f"\n⚠️  Failed to process {len(failed_problems)} problems:")
+                print(f"\n⚠️  Failed to extract {len(failed_problems)} problems:")
                 for failed in failed_problems:
-                    print(f"   Problem {failed['problem_number']}: {failed['error']}")
+                    error_msg = failed['error']
+                    if len(error_msg) > 80:
+                        error_msg = error_msg[:77] + "..."
+                    print(f"   Problem {failed['problem_number']}: {error_msg}")
             
             total_failures = stats['failed'] + stats['processing_failed']
-            success_rate = stats['inserted'] / len(problems) * 100
+            success_rate = (len(problems) - total_failures) / len(problems) * 100 if len(problems) > 0 else 0
             print(f"📊 Success rate: {success_rate:.1f}%")
             
             print(f"\n💡 Next step: Run manual_answer_input.py to add answers to these records")

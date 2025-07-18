@@ -7,6 +7,8 @@ import os
 import json
 import base64
 import logging
+import time
+import random
 from typing import Dict, Any, Optional, List
 from PIL import Image
 import openai
@@ -23,7 +25,14 @@ logger = logging.getLogger(__name__)
 
 
 class GPTExtractor:
-    """GPT extractor for individual problem images using GPT-4o-mini."""
+    """GPT extractor for individual problem images using GPT-4o-mini.
+    
+    Note: This extractor focuses only on content, problem type, and choices.
+    It does NOT extract metadata fields like:
+    - correct_rate: Used for future difficulty determination (manually input)
+    - difficulty: Determined separately based on correct_rate data
+    - explanation: Not extracted to keep costs low for MVP
+    """
     
     def __init__(self, api_key: Optional[str] = None):
         """
@@ -39,12 +48,23 @@ class GPTExtractor:
         # Initialize OpenAI client
         self.client = openai.OpenAI(api_key=self.api_key)
         
-        # Simple configuration
-        self.model = "gpt-4o-mini"  # Lightweight model for cost efficiency
-        self.max_tokens = 2000     # Reduced tokens since no explanation needed
-        self.temperature = 0.1     # Low temperature for consistent results
+        # Configuration from settings
+        self.model = settings.OPENAI_MODEL
+        self.max_tokens = settings.OPENAI_MAX_TOKENS
+        self.temperature = settings.OPENAI_TEMPERATURE
+        
+        # Rate limiting configuration
+        self.requests_per_minute = settings.OPENAI_REQUESTS_PER_MINUTE
+        self.retry_attempts = settings.OPENAI_RETRY_ATTEMPTS
+        self.retry_base_delay = settings.OPENAI_RETRY_BASE_DELAY
+        self.retry_max_delay = settings.OPENAI_RETRY_MAX_DELAY
+        
+        # Rate limiting state
+        self.last_request_time = 0.0
+        self.min_request_interval = 60.0 / self.requests_per_minute  # seconds between requests
         
         logger.info(f"GPT Extractor initialized with model: {self.model}")
+        logger.info(f"Rate limiting: {self.requests_per_minute} requests/minute, {self.retry_attempts} retry attempts")
     
     def encode_image(self, image_path: str) -> str:
         """
@@ -63,17 +83,189 @@ class GPTExtractor:
             logger.error(f"Failed to encode image {image_path}: {e}")
             raise
     
-    def get_extraction_prompt(self) -> str:
+    def get_image_mime_type(self, image_path: str) -> str:
+        """
+        Get the MIME type for an image file based on its extension.
+        
+        Args:
+            image_path: Path to image file
+            
+        Returns:
+            MIME type string (e.g., 'image/png', 'image/jpeg')
+        """
+        extension = os.path.splitext(image_path)[1].lower()
+        
+        mime_types = {
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg'
+        }
+        
+        return mime_types.get(extension, 'image/png')  # Default to PNG if unknown
+    
+    def _wait_for_rate_limit(self) -> None:
+        """Enforce rate limiting between API requests."""
+        current_time = time.time()
+        time_since_last_request = current_time - self.last_request_time
+        
+        if time_since_last_request < self.min_request_interval:
+            sleep_time = self.min_request_interval - time_since_last_request
+            logger.debug(f"Rate limiting: waiting {sleep_time:.2f} seconds")
+            time.sleep(sleep_time)
+        
+        self.last_request_time = time.time()
+    
+    def _extract_wait_time_from_error(self, error_str: str) -> float:
+        """
+        Extract suggested wait time from OpenAI API error message.
+        
+        Args:
+            error_str: Error message string
+            
+        Returns:
+            Wait time in seconds (0.0 if not found)
+        """
+        import re
+        
+        # Look for patterns like "Please try again in 372ms" or "try again in 1.5s"
+        patterns = [
+            r'try again in (\d+)ms',  # milliseconds
+            r'try again in (\d+\.?\d*)s',  # seconds
+            r'try again in (\d+\.?\d*) seconds',  # seconds (verbose)
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, error_str, re.IGNORECASE)
+            if match:
+                value = float(match.group(1))
+                if 'ms' in pattern:
+                    return value / 1000.0  # Convert ms to seconds
+                else:
+                    return value
+        
+        return 0.0
+    
+    def _is_rate_limit_error(self, exception: Exception) -> bool:
+        """
+        Check if an exception is a rate limit error.
+        
+        Args:
+            exception: Exception to check
+            
+        Returns:
+            True if this is a rate limit error
+        """
+        error_str = str(exception)
+        
+        # Check for rate limit indicators
+        rate_limit_indicators = [
+            'rate limit',
+            'rate_limit_exceeded',
+            'Too Many Requests',
+            '429',
+            'TPM:',  # Tokens per minute
+            'RPM:'   # Requests per minute
+        ]
+        
+        return any(indicator.lower() in error_str.lower() for indicator in rate_limit_indicators)
+    
+    def _make_api_call_with_retry(self, messages: List[Dict]) -> str:
+        """
+        Make OpenAI API call with exponential backoff retry logic.
+        
+        Args:
+            messages: Messages to send to the API
+            
+        Returns:
+            Response content from the API
+            
+        Raises:
+            Exception: If all retry attempts fail
+        """
+        last_exception = None
+        
+        for attempt in range(self.retry_attempts):
+            try:
+                # Enforce rate limiting
+                self._wait_for_rate_limit()
+                
+                logger.debug(f"Making API call (attempt {attempt + 1}/{self.retry_attempts})")
+                
+                # Make the API call
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    max_tokens=self.max_tokens,
+                    temperature=self.temperature
+                )
+                
+                if attempt > 0:
+                    logger.info(f"API call succeeded after {attempt + 1} attempts")
+                
+                return response.choices[0].message.content
+                
+            except Exception as e:
+                last_exception = e
+                error_str = str(e)
+                
+                # Check if this is a rate limit error
+                if self._is_rate_limit_error(e):
+                    if attempt < self.retry_attempts - 1:
+                        # Extract suggested wait time from API response
+                        api_suggested_wait = self._extract_wait_time_from_error(error_str)
+                        
+                        # Calculate exponential backoff delay
+                        base_delay = self.retry_base_delay * (2 ** attempt)
+                        jitter = random.uniform(0.1, 0.5)  # Add jitter to avoid thundering herd
+                        exponential_delay = min(base_delay + jitter, self.retry_max_delay)
+                        
+                        # Use the longer of API suggestion or exponential backoff
+                        delay = max(api_suggested_wait, exponential_delay)
+                        
+                        if api_suggested_wait > 0:
+                            logger.warning(f"Rate limit hit (attempt {attempt + 1}/{self.retry_attempts}). API suggests {api_suggested_wait:.3f}s, using {delay:.2f}s with backoff...")
+                        else:
+                            logger.warning(f"Rate limit hit (attempt {attempt + 1}/{self.retry_attempts}). Using exponential backoff: {delay:.2f}s...")
+                        
+                        time.sleep(delay)
+                    else:
+                        logger.error(f"Rate limit exceeded after {self.retry_attempts} attempts: {error_str}")
+                        
+                else:
+                    # Non-rate-limit error
+                    if attempt < self.retry_attempts - 1:
+                        delay = self.retry_base_delay * (2 ** attempt)
+                        logger.warning(f"API call failed (attempt {attempt + 1}/{self.retry_attempts}): {error_str[:100]}... Retrying in {delay:.2f}s...")
+                        time.sleep(delay)
+                    else:
+                        logger.error(f"API call failed after {self.retry_attempts} attempts: {error_str}")
+        
+        # If we get here, all attempts failed
+        raise last_exception or Exception("All retry attempts failed")
+    
+    def get_extraction_prompt(self, problem_number: Optional[int] = None) -> str:
         """
         Get the simplified prompt for content extraction only.
+        
+        Args:
+            problem_number: Optional problem number to include in instructions
         
         Returns:
             Lightweight prompt focusing on content, type, and choices only
         """
-        return """당신은 한국 고등학교 수학 문제를 분석하는 전문가입니다.
+        # Create dynamic prompt based on problem number
+        problem_number_instruction = ""
+        if problem_number is not None:
+            problem_number_instruction = f"""
+**중요: 문제 번호 규칙:**
+- 문제 내용은 반드시 "{problem_number}. "으로 시작해야 합니다
+- 예시: "{problem_number}. 다음 함수의 최댓값을 구하시오..."
+"""
+        
+        return f"""당신은 한국 고등학교 수학 문제를 분석하는 전문가입니다.
 
 주어진 이미지의 수학 문제에서 다음 정보만 추출해주세요:
-
+{problem_number_instruction}
 **추출할 정보:**
 1. **문제 내용**: 문제의 전체 텍스트 (수식 포함)
 2. **문제 유형**: 객관식인지 주관식인지
@@ -111,17 +303,17 @@ class GPTExtractor:
 
 **응답 형식** (JSON):
 ```json
-{
-  "content": "문제 본문 전체 (수식과 모든 텍스트 포함, 박스 형식화 적용)",
+{{
+  "content": "문제 본문 전체 (문제 번호로 시작, 수식과 모든 텍스트 포함, 박스 형식화 적용)",
   "problem_type": "multiple_choice" 또는 "subjective",
-  "choices": {
+  "choices": {{
     "1": "선택지1",
     "2": "선택지2",
     "3": "선택지3",
     "4": "선택지4",
     "5": "선택지5"
-  }
-}
+  }}
+}}
 ```
 
 **중요 규칙:**
@@ -133,13 +325,14 @@ class GPTExtractor:
 
 이미지를 분석하여 위 형식으로 응답해주세요."""
     
-    def extract_from_image(self, image_path: str, math_content_images: Optional[List[str]] = None) -> Dict[str, Any]:
+    def extract_from_image(self, image_path: str, math_content_images: Optional[List[str]] = None, problem_number: Optional[int] = None) -> Dict[str, Any]:
         """
         Extract problem content from a single image.
         
         Args:
             image_path: Path to problem image
             math_content_images: Optional list of additional math content images
+            problem_number: Optional problem number to include at start of content
             
         Returns:
             Dictionary with extracted problem data
@@ -149,17 +342,18 @@ class GPTExtractor:
             
             # Encode main problem image
             base64_image = self.encode_image(image_path)
+            main_image_mime = self.get_image_mime_type(image_path)
             
             # Prepare content for API call
             content_list = [
                 {
                     "type": "text",
-                    "text": self.get_extraction_prompt()
+                    "text": self.get_extraction_prompt(problem_number)
                 },
                 {
                     "type": "image_url", 
                     "image_url": {
-                        "url": f"data:image/png;base64,{base64_image}"
+                        "url": f"data:{main_image_mime};base64,{base64_image}"
                     }
                 }
             ]
@@ -174,6 +368,7 @@ class GPTExtractor:
                 for i, content_image_path in enumerate(math_content_images, 1):
                     try:
                         content_base64 = self.encode_image(content_image_path)
+                        content_image_mime = self.get_image_mime_type(content_image_path)
                         content_list.extend([
                             {
                                 "type": "text",
@@ -182,28 +377,22 @@ class GPTExtractor:
                             {
                                 "type": "image_url",
                                 "image_url": {
-                                    "url": f"data:image/png;base64,{content_base64}"
+                                    "url": f"data:{content_image_mime};base64,{content_base64}"
                                 }
                             }
                         ])
                     except Exception as e:
                         logger.warning(f"Failed to encode math content image {content_image_path}: {e}")
             
-            # Make API call
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": content_list
-                    }
-                ],
-                max_tokens=self.max_tokens,
-                temperature=self.temperature
-            )
+            # Make API call with retry logic
+            messages = [
+                {
+                    "role": "user",
+                    "content": content_list
+                }
+            ]
             
-            # Extract and parse response
-            content = response.choices[0].message.content
+            content = self._make_api_call_with_retry(messages)
             problem_data = self._parse_response(content)
             
             # Validate extracted data

@@ -102,6 +102,7 @@ class DatabaseSaver:
             'subject': problem.get('subject', None),
             'chapter': problem.get('chapter', None),
             'difficulty': problem.get('difficulty', None),
+            'correct_rate': problem.get('correct_rate', None),  # For future difficulty determination
             'source_info': problem.get('source_info', None),
             'tags': problem.get('tags', None),
             'images': problem.get('images', None),
@@ -131,6 +132,19 @@ class DatabaseSaver:
         if validated['difficulty'] is not None and validated['difficulty'] not in valid_difficulties:
             logger.warning(f"Invalid difficulty: {validated['difficulty']}, defaulting to 'medium'")
             validated['difficulty'] = 'medium'
+        
+        # Validate correct_rate (for future difficulty determination)
+        if validated['correct_rate'] is not None:
+            try:
+                correct_rate = float(validated['correct_rate'])
+                if correct_rate < settings.MIN_CORRECT_RATE or correct_rate > settings.MAX_CORRECT_RATE:
+                    logger.warning(f"Invalid correct_rate: {correct_rate}, must be between {settings.MIN_CORRECT_RATE} and {settings.MAX_CORRECT_RATE}")
+                    validated['correct_rate'] = None
+                else:
+                    validated['correct_rate'] = correct_rate
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid correct_rate format: {validated['correct_rate']}, setting to None")
+                validated['correct_rate'] = None
         
         # Validate content length
         content_length = len(validated['content'])

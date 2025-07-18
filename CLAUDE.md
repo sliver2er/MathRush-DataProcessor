@@ -84,11 +84,13 @@ MathRush-DataProcessor/
   choices: JSONB                  -- 객관식 선택지
   correct_answer: TEXT            -- 정답
   explanation: TEXT               -- 해설
-  curriculum: ENUM                -- 2015개정 | 2022개정
+  exam_name: TEXT                 -- 시험명 (필수, 고유 키의 일부)
+  problem_number: INTEGER         -- 문제 번호 (필수, 고유 키의 일부)
   level: TEXT                     -- 중1~고3 | 고1~고3
   subject: TEXT                   -- 수학상|수학하|수필1|미적분|확률과통계|기하
   chapter: TEXT                   -- 단원명
   difficulty: ENUM                -- easy | medium | hard
+  correct_rate: FLOAT             -- 정답률 (0.0-100.0, 향후 난이도 결정용)
   source_info: JSONB              -- 출처 정보
   tags: TEXT[]                    -- 태그 배열
   images: TEXT[]                  -- 이미지 파일 경로 배열
@@ -119,6 +121,7 @@ MathRush-DataProcessor/
       "subject": "수학영역",
       "chapter": "미적분",
       "difficulty": "medium",
+      "correct_rate": 45.2,
       "tags": ["최댓값", "미분"],
       "images": ["2020-12-03_suneung_problem_1_img_1.png"],
       "source_info": {
@@ -225,6 +228,7 @@ python -m processors.gpt_extractor path/to/problem.png --verbose
 3. **내용 추출 테스트** - simple_processor.py로 GPT 추출
 4. **데이터 검증** - 데이터베이스에 올바르게 저장되는지 확인
 5. **대량 처리** - 전체 문제집 처리
+6. **난이도 결정** - correct_rate 데이터 수집 및 difficulty 업데이트 (향후 작업)
 
 ## 📞 협업 시 참고사항
 - **코드 리뷰**: 모든 핵심 로직은 Claude와 함께 검토

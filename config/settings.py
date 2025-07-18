@@ -27,8 +27,14 @@ class Settings:
     # OpenAI Settings
     OPENAI_API_KEY: str = os.getenv('OPENAI_API_KEY', '')
     OPENAI_MODEL: str = os.getenv('OPENAI_MODEL', 'gpt-4o-mini')
-    OPENAI_MAX_TOKENS: int = int(os.getenv('OPENAI_MAX_TOKENS', '4000'))
+    OPENAI_MAX_TOKENS: int = int(os.getenv('OPENAI_MAX_TOKENS', '2000'))
     OPENAI_TEMPERATURE: float = float(os.getenv('OPENAI_TEMPERATURE', '0.1'))
+    
+    # Rate limiting settings
+    OPENAI_REQUESTS_PER_MINUTE: int = int(os.getenv('OPENAI_REQUESTS_PER_MINUTE', '50'))
+    OPENAI_RETRY_ATTEMPTS: int = int(os.getenv('OPENAI_RETRY_ATTEMPTS', '5'))
+    OPENAI_RETRY_BASE_DELAY: float = float(os.getenv('OPENAI_RETRY_BASE_DELAY', '2.0'))
+    OPENAI_RETRY_MAX_DELAY: float = float(os.getenv('OPENAI_RETRY_MAX_DELAY', '60.0'))
     
     # Supabase Settings
     SUPABASE_URL: str = os.getenv('SUPABASE_URL', '')
@@ -49,6 +55,10 @@ class Settings:
     MAX_PROBLEM_LENGTH: int = int(os.getenv('MAX_PROBLEM_LENGTH', '5000'))
     REQUIRED_FIELDS: list = ['content', 'problem_type', 'correct_answer', 'exam_name', 'problem_number']
     
+    # Correct Rate Validation (for future difficulty determination)
+    MIN_CORRECT_RATE: float = float(os.getenv('MIN_CORRECT_RATE', '0.0'))    # 0% correct rate
+    MAX_CORRECT_RATE: float = float(os.getenv('MAX_CORRECT_RATE', '100.0'))  # 100% correct rate
+    
     @classmethod
     def get_pdf_config(cls) -> Dict[str, Any]:
         """Get PDF processing configuration."""
@@ -65,7 +75,11 @@ class Settings:
             'api_key': cls.OPENAI_API_KEY,
             'model': cls.OPENAI_MODEL,
             'max_tokens': cls.OPENAI_MAX_TOKENS,
-            'temperature': cls.OPENAI_TEMPERATURE
+            'temperature': cls.OPENAI_TEMPERATURE,
+            'requests_per_minute': cls.OPENAI_REQUESTS_PER_MINUTE,
+            'retry_attempts': cls.OPENAI_RETRY_ATTEMPTS,
+            'retry_base_delay': cls.OPENAI_RETRY_BASE_DELAY,
+            'retry_max_delay': cls.OPENAI_RETRY_MAX_DELAY
         }
     
     @classmethod

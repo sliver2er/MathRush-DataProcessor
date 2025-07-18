@@ -103,9 +103,22 @@ python manual_answer_input.py input/2020-12-03_suneung_가형/
 python simple_processor.py input/2020-12-03_suneung_가형/
 ```
 
+## Database Fields
+
+When processed, each problem will include:
+- **exam_name** + **problem_number**: Unique identifier pair
+- **content**: Problem text extracted by GPT
+- **problem_type**: multiple_choice or subjective
+- **choices**: Answer choices for multiple choice problems
+- **correct_answer**: Manually input answer
+- **difficulty**: easy/medium/hard (defaults to medium)
+- **correct_rate**: Answer success rate (0.0-100.0%) for future difficulty determination
+- **images**: Paths to math content images only
+
 ## Notes
 
-- Images should be high quality PNG files
+- Images should be high quality PNG files (JPG/JPEG also supported)
 - Each problem should be cleanly segmented
 - Math content images are optional but recommended for problems with diagrams
 - Make sure problem numbers are sequential (01, 02, 03, ...)
+- The system prevents duplicate records using exam_name + problem_number as unique keys
