@@ -1,109 +1,172 @@
+#!/usr/bin/env python3
 """
-Check Supabase database contents after processing.
+Database checker utility for MathRush DataProcessor.
+Quick way to check database content and statistics.
 """
 
-import os
 import sys
+import os
+from datetime import datetime
+
+# Add project root to path
 sys.path.append(os.path.dirname(__file__))
 
 from processors import DatabaseSaver
-from config.settings import settings
-import json
 
 def check_database():
-    """Check the current state of the database."""
-    print("=== Checking Supabase Database ===\n")
-    
+    """Check database content and show statistics."""
     try:
-        # Initialize database connection
-        db_saver = DatabaseSaver()
+        db = DatabaseSaver()
         
         # Test connection
-        print("1. Testing connection...")
-        if db_saver.test_connection():
-            print("✅ Database connection successful\n")
-        else:
-            print("❌ Database connection failed\n")
-            return
+        print("🔍 CHECKING DATABASE CONNECTION...")
+        if not db.test_connection():
+            print("❌ Database connection failed")
+            return False
         
-        # Get total problem count
-        print("2. Getting total problem count...")
-        total_count = db_saver.get_problem_count()
-        print(f"📊 Total problems in database: {total_count}\n")
+        print("✅ Database connection successful")
         
-        # Get recent problems
-        print("3. Fetching recent problems...")
-        try:
-            # Query recent problems
-            result = db_saver.client.table(settings.SUPABASE_TABLE).select("*").order("created_at", desc=True).limit(10).execute()
-            
-            if result.data:
-                print(f"📋 Found {len(result.data)} recent problems:\n")
-                
-                for i, problem in enumerate(result.data, 1):
-                    print(f"Problem {i}:")
-                    print(f"  ID: {problem.get('id', 'N/A')}")
-                    print(f"  Content: {problem.get('content', 'N/A')[:100]}...")
-                    print(f"  Problem Type: {problem.get('problem_type', 'N/A')}")
-                    print(f"  Level: {problem.get('level', 'N/A')}")
-                    print(f"  Subject: {problem.get('subject', 'N/A')}")
-                    print(f"  Images: {problem.get('images', [])}")
-                    print(f"  Created: {problem.get('created_at', 'N/A')}")
-                    print(f"  Source: {problem.get('source_info', {}).get('problems_file', 'N/A')}")
-                    print()
-            else:
-                print("📭 No problems found in database\n")
-                
-        except Exception as e:
-            print(f"❌ Error querying problems: {e}\n")
+        # Get all records
+        result = db.client.table('problems').select('*').execute()
+        records = result.data
         
-        # Check for problems from our test file
-        print("4. Checking for 2020-12-03 suneung problems...")
-        try:
-            result = db_saver.client.table(settings.SUPABASE_TABLE).select("*").contains("source_info", {"problems_file": "2020-12-03_suneung_problems.pdf"}).execute()
-            
-            if result.data:
-                print(f"🎯 Found {len(result.data)} problems from 2020-12-03 suneung exam:")
-                
-                for i, problem in enumerate(result.data, 1):
-                    print(f"  Problem {i}:")
-                    print(f"    ID: {problem.get('id')}")
-                    print(f"    Problem Number: {problem.get('problem_number', 'N/A')}")
-                    print(f"    Content: {problem.get('content', 'N/A')[:150]}...")
-                    print(f"    Correct Answer: {problem.get('correct_answer', 'N/A')}")
-                    print(f"    Images: {len(problem.get('images', []))} files")
-                    if problem.get('images'):
-                        print(f"      Image files: {problem.get('images')}")
-                    print(f"    Match Method: {problem.get('match_method', 'N/A')}")
-                    print()
-            else:
-                print("📭 No problems found from 2020-12-03 suneung exam")
-                
-        except Exception as e:
-            print(f"❌ Error querying suneung problems: {e}")
+        print(f"\n📊 DATABASE STATISTICS")
+        print(f"{'='*50}")
+        print(f"Total records: {len(records)}")
         
-        # Check database schema
-        print("5. Checking database schema...")
-        try:
-            # Try to get one record to see the schema
-            result = db_saver.client.table(settings.SUPABASE_TABLE).select("*").limit(1).execute()
+        if not records:
+            print("No records found in database")
+            return True
+        
+        # Group by exam
+        exams = {}
+        answered_count = 0
+        
+        for record in records:
+            source_info = record.get('source_info', {})
+            exam_name = source_info.get('exam_name', 'Unknown')
             
-            if result.data:
-                sample_record = result.data[0]
-                print("📋 Database schema (sample record fields):")
-                for key, value in sample_record.items():
-                    value_type = type(value).__name__
-                    value_preview = str(value)[:50] + "..." if len(str(value)) > 50 else str(value)
-                    print(f"  {key}: {value_type} = {value_preview}")
-                print()
-            else:
-                print("📭 No records available to check schema")
-                
-        except Exception as e:
-            print(f"❌ Error checking schema: {e}")
+            if exam_name not in exams:
+                exams[exam_name] = {
+                    'total': 0,
+                    'answered': 0,
+                    'multiple_choice': 0,
+                    'subjective': 0
+                }
             
+            exams[exam_name]['total'] += 1
+            
+            if record.get('correct_answer'):
+                answered_count += 1
+                exams[exam_name]['answered'] += 1
+            
+            problem_type = record.get('problem_type', 'unknown')
+            if problem_type == 'multiple_choice':
+                exams[exam_name]['multiple_choice'] += 1
+            elif problem_type == 'subjective':
+                exams[exam_name]['subjective'] += 1
+        
+        print(f"Total answered: {answered_count}/{len(records)} ({answered_count/len(records)*100:.1f}%)")
+        print(f"Total exams: {len(exams)}")
+        
+        # Show exam details
+        print(f"\n📚 EXAM BREAKDOWN")
+        print(f"{'='*50}")
+        for exam_name, stats in exams.items():
+            answered_pct = stats['answered']/stats['total']*100 if stats['total'] > 0 else 0
+            print(f"\n📋 {exam_name}")
+            print(f"  Total problems: {stats['total']}")
+            print(f"  Answered: {stats['answered']}/{stats['total']} ({answered_pct:.1f}%)")
+            print(f"  Multiple choice: {stats['multiple_choice']}")
+            print(f"  Subjective: {stats['subjective']}")
+        
+        # Show sample records
+        print(f"\n📄 SAMPLE RECORDS")
+        print(f"{'='*50}")
+        
+        # Show first few records
+        for i, record in enumerate(records[:5]):
+            source_info = record.get('source_info', {})
+            problem_num = source_info.get('problem_number', 'Unknown')
+            exam_name = source_info.get('exam_name', 'Unknown')
+            content = record.get('content', '')[:80] + '...'
+            answer = record.get('correct_answer', '(empty)')
+            problem_type = record.get('problem_type', 'unknown')
+            
+            print(f"\n{i+1}. Problem {problem_num} ({exam_name})")
+            print(f"   Type: {problem_type}")
+            print(f"   Content: {content}")
+            print(f"   Answer: {answer}")
+        
+        return True
+        
     except Exception as e:
-        print(f"❌ Database check failed: {e}")
+        print(f"❌ Error checking database: {e}")
+        return False
+
+def search_problems(query=None, exam_name=None):
+    """Search for specific problems."""
+    try:
+        db = DatabaseSaver()
+        
+        # Build query
+        query_builder = db.client.table('problems').select('*')
+        
+        if exam_name:
+            query_builder = query_builder.eq('source_info->>exam_name', exam_name)
+        
+        result = query_builder.execute()
+        records = result.data
+        
+        print(f"\n🔍 SEARCH RESULTS")
+        print(f"{'='*50}")
+        print(f"Found {len(records)} records")
+        
+        if query:
+            # Filter by content
+            filtered_records = []
+            for record in records:
+                content = record.get('content', '').lower()
+                if query.lower() in content:
+                    filtered_records.append(record)
+            records = filtered_records
+            print(f"Filtered to {len(records)} records containing '{query}'")
+        
+        for i, record in enumerate(records[:10]):  # Show first 10
+            source_info = record.get('source_info', {})
+            problem_num = source_info.get('problem_number', 'Unknown')
+            exam_name = source_info.get('exam_name', 'Unknown')
+            content = record.get('content', '')[:100] + '...'
+            answer = record.get('correct_answer', '(empty)')
+            
+            print(f"\n{i+1}. Problem {problem_num} ({exam_name})")
+            print(f"   Content: {content}")
+            print(f"   Answer: {answer}")
+        
+        if len(records) > 10:
+            print(f"\n... and {len(records) - 10} more records")
+        
+    except Exception as e:
+        print(f"❌ Error searching database: {e}")
+
+def main():
+    """Main function."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Check MathRush database content")
+    parser.add_argument("--search", help="Search for problems containing this text")
+    parser.add_argument("--exam", help="Filter by exam name")
+    parser.add_argument("--stats-only", action="store_true", help="Show only statistics")
+    
+    args = parser.parse_args()
+    
+    print("🤖 MathRush Database Checker")
+    print("=" * 50)
+    
+    if args.search or args.exam:
+        search_problems(query=args.search, exam_name=args.exam)
+    else:
+        check_database()
 
 if __name__ == "__main__":
-    check_database()
+    main()

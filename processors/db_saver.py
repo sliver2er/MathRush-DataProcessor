@@ -75,6 +75,17 @@ class DatabaseSaver:
         """
         validated = {}
         
+        # Extract exam_name and problem_number from source_info if not provided directly
+        if 'exam_name' not in problem and 'source_info' in problem:
+            source_info = problem.get('source_info', {})
+            if 'exam_name' in source_info:
+                problem['exam_name'] = source_info['exam_name']
+        
+        if 'problem_number' not in problem and 'source_info' in problem:
+            source_info = problem.get('source_info', {})
+            if 'problem_number' in source_info:
+                problem['problem_number'] = source_info['problem_number']
+        
         # Required fields
         required_fields = settings.REQUIRED_FIELDS
         for field in required_fields:
@@ -103,6 +114,16 @@ class DatabaseSaver:
         if validated['problem_type'] not in valid_problem_types:
             logger.warning(f"Invalid problem_type: {validated['problem_type']}, defaulting to 'subjective'")
             validated['problem_type'] = 'subjective'
+        
+        # Validate exam_name and problem_number
+        if not isinstance(validated['exam_name'], str) or not validated['exam_name'].strip():
+            raise ValueError("exam_name must be a non-empty string")
+        
+        if not isinstance(validated['problem_number'], int) and not str(validated['problem_number']).isdigit():
+            raise ValueError("problem_number must be a positive integer")
+        
+        # Ensure problem_number is integer
+        validated['problem_number'] = int(validated['problem_number'])
         
 # Curriculum field removed from database schema
         
@@ -240,6 +261,79 @@ class DatabaseSaver:
         logger.info(f"Bulk insert completed: {results['successful']}/{results['total']} successful")
         return results
     
+    def bulk_upsert_problems(self, problems: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Upsert multiple problems in batch.
+        
+        Args:
+            problems: List of problem data dictionaries
+            
+        Returns:
+            Dictionary with upsert results
+        """
+        results = {
+            'total': len(problems),
+            'successful': 0,
+            'failed': 0,
+            'errors': [],
+            'inserted': 0,
+            'updated': 0
+        }
+        
+        if not problems:
+            logger.warning("No problems to upsert")
+            return results
+        
+        logger.info(f"Starting bulk upsert of {len(problems)} problems")
+        
+        for i, problem in enumerate(problems):
+            try:
+                # Validate first
+                validated = self.validate_problem_data(problem)
+                exam_name = validated['exam_name']
+                problem_number = validated['problem_number']
+                
+                # Check if exists
+                existing = self.find_existing_problem(exam_name, problem_number)
+                
+                if existing:
+                    # Update existing
+                    existing_id = existing['id']
+                    update_data = {k: v for k, v in validated.items() if k != 'created_at'}
+                    update_data['updated_at'] = datetime.now().isoformat()
+                    
+                    result = self.client.table(self.table_name).update(update_data).eq("id", existing_id).execute()
+                    
+                    if result.data:
+                        results['successful'] += 1
+                        results['updated'] += 1
+                        logger.debug(f"Updated: {exam_name} #{problem_number}")
+                    else:
+                        results['failed'] += 1
+                        results['errors'].append(f"Update failed for {exam_name} #{problem_number}")
+                else:
+                    # Insert new
+                    result = self.client.table(self.table_name).insert(validated).execute()
+                    
+                    if result.data:
+                        results['successful'] += 1
+                        results['inserted'] += 1
+                        logger.debug(f"Inserted: {exam_name} #{problem_number}")
+                    else:
+                        results['failed'] += 1
+                        results['errors'].append(f"Insert failed for {exam_name} #{problem_number}")
+                
+                # Rate limiting
+                time.sleep(0.1)
+                
+            except Exception as e:
+                results['failed'] += 1
+                results['errors'].append(f"Problem {i}: {str(e)}")
+                logger.error(f"Error upserting problem {i}: {e}")
+        
+        logger.info(f"Bulk upsert completed: {results['successful']}/{results['total']} successful ({results['inserted']} inserted, {results['updated']} updated)")
+        return results
+    
     def check_duplicate(self, content: str) -> Optional[Dict[str, Any]]:
         """
         Check if a problem with similar content already exists.
@@ -262,6 +356,85 @@ class DatabaseSaver:
             
         except Exception as e:
             logger.error(f"Error checking duplicate: {e}")
+            return None
+    
+    def find_existing_problem(self, exam_name: str, problem_number: int) -> Optional[Dict[str, Any]]:
+        """
+        Find existing problem by exam_name and problem_number.
+        
+        Args:
+            exam_name: Name of the exam
+            problem_number: Problem number
+            
+        Returns:
+            Existing problem data if found, None otherwise
+        """
+        try:
+            result = self.client.table(self.table_name)\
+                .select("*")\
+                .eq("exam_name", exam_name)\
+                .eq("problem_number", problem_number)\
+                .execute()
+            
+            if result.data:
+                logger.info(f"Found existing problem: {exam_name} #{problem_number}")
+                return result.data[0]
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error finding existing problem: {e}")
+            return None
+    
+    def upsert_problem(self, problem: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Insert or update a problem based on exam_name and problem_number.
+        
+        Args:
+            problem: Problem data dictionary
+            
+        Returns:
+            Upserted problem data with ID, or None if failed
+        """
+        try:
+            # Validate data first
+            validated_problem = self.validate_problem_data(problem)
+            
+            exam_name = validated_problem['exam_name']
+            problem_number = validated_problem['problem_number']
+            
+            # Check if record already exists
+            existing_problem = self.find_existing_problem(exam_name, problem_number)
+            
+            if existing_problem:
+                # Update existing record
+                existing_id = existing_problem['id']
+                update_data = {k: v for k, v in validated_problem.items() if k != 'created_at'}
+                update_data['updated_at'] = datetime.now().isoformat()
+                
+                result = self.client.table(self.table_name).update(update_data).eq("id", existing_id).execute()
+                
+                if result.data:
+                    updated_problem = result.data[0]
+                    logger.info(f"Updated existing problem: {exam_name} #{problem_number} (ID: {existing_id})")
+                    return updated_problem
+                else:
+                    logger.error(f"Update operation returned no data for: {exam_name} #{problem_number}")
+                    return None
+            else:
+                # Insert new record
+                result = self.client.table(self.table_name).insert(validated_problem).execute()
+                
+                if result.data:
+                    inserted_problem = result.data[0]
+                    logger.info(f"Inserted new problem: {exam_name} #{problem_number} (ID: {inserted_problem.get('id')})")
+                    return inserted_problem
+                else:
+                    logger.error(f"Insert operation returned no data for: {exam_name} #{problem_number}")
+                    return None
+                    
+        except Exception as e:
+            logger.error(f"Error upserting problem: {e}")
             return None
     
     def update_problem(self, problem_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:

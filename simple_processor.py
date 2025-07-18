@@ -104,6 +104,40 @@ class SimpleProcessor:
         
         return sorted_problems
     
+    def find_failed_extractions(self, exam_name: str) -> List[Dict]:
+        """
+        Find existing records with failed extractions.
+        
+        Args:
+            exam_name: Name of the exam
+            
+        Returns:
+            List of failed extraction records
+        """
+        try:
+            result = self.db_saver.client.table(self.db_saver.table_name)\
+                .select("*")\
+                .eq("source_info->>exam_name", exam_name)\
+                .execute()
+            
+            failed_records = []
+            for record in result.data:
+                content = record.get('content', '')
+                if 'Extraction Failed' in content:
+                    source_info = record.get('source_info', {})
+                    failed_records.append({
+                        'record_id': record['id'],
+                        'problem_number': source_info.get('problem_number'),
+                        'content': content,
+                        'correct_answer': record.get('correct_answer', '')
+                    })
+            
+            return failed_records
+            
+        except Exception as e:
+            logger.error(f"Error finding failed extractions: {e}")
+            return []
+    
     def process_problem_images(self, problems: List[Dict], exam_metadata: Dict) -> Tuple[List[Dict], List[Dict]]:
         """
         Process problem images through GPT extraction and create database records.
@@ -163,7 +197,7 @@ class SimpleProcessor:
                         'gpt_processed': True,
                         'gpt_processed_timestamp': time.strftime('%Y-%m-%dT%H:%M:%S')
                     },
-                    'images': [problem_image] + math_content_images
+                    'images': math_content_images  # Only store math content images (diagrams)
                 }
                 
                 processed_problems.append(problem_record)
@@ -182,15 +216,15 @@ class SimpleProcessor:
         
         return processed_problems, failed_problems
     
-    def insert_problems_to_database(self, processed_problems: List[Dict]) -> Dict[str, int]:
+    def upsert_problems_to_database(self, processed_problems: List[Dict]) -> Dict[str, int]:
         """
-        Insert new problem records to database.
+        Upsert problem records to database (insert or update).
         
         Args:
             processed_problems: List of processed problem records
             
         Returns:
-            Dictionary with insertion statistics
+            Dictionary with upsert statistics
         """
         stats = {
             'inserted': 0,
@@ -198,20 +232,84 @@ class SimpleProcessor:
             'total': len(processed_problems)
         }
         
-        # Use bulk insert for efficiency
-        results = self.db_saver.bulk_insert_problems(processed_problems)
+        # Use bulk upsert for efficiency
+        results = self.db_saver.bulk_upsert_problems(processed_problems)
         
         stats['inserted'] = results['successful']
         stats['failed'] = results['failed']
         
         return stats
     
-    def process_exam_directory(self, exam_dir: str) -> bool:
+    def update_failed_records(self, processed_problems: List[Dict]) -> Dict[str, int]:
         """
-        Process entire exam directory and create database records with GPT content.
+        Update existing database records with new GPT content.
+        
+        Args:
+            processed_problems: List of processed problem records
+            
+        Returns:
+            Dictionary with update statistics
+        """
+        stats = {
+            'inserted': 0,  # Keep same naming for consistency
+            'failed': 0,
+            'total': len(processed_problems)
+        }
+        
+        for problem in processed_problems:
+            try:
+                # Find the record ID from source_info
+                source_info = problem.get('source_info', {})
+                exam_name = source_info.get('exam_name')
+                problem_number = source_info.get('problem_number')
+                
+                # Get the record ID by querying the database
+                result = self.db_saver.client.table(self.db_saver.table_name)\
+                    .select("id")\
+                    .eq("source_info->>exam_name", exam_name)\
+                    .eq("source_info->>problem_number", problem_number)\
+                    .execute()
+                
+                if result.data:
+                    record_id = result.data[0]['id']
+                    
+                    # Update only the content-related fields
+                    update_data = {
+                        'content': problem.get('content'),
+                        'problem_type': problem.get('problem_type'),
+                        'choices': problem.get('choices'),
+                        'updated_at': time.strftime('%Y-%m-%dT%H:%M:%S')
+                    }
+                    
+                    # Update the record
+                    update_result = self.db_saver.client.table(self.db_saver.table_name)\
+                        .update(update_data)\
+                        .eq('id', record_id)\
+                        .execute()
+                    
+                    if update_result.data:
+                        stats['inserted'] += 1
+                        logger.info(f"Updated record for Problem {problem_number}")
+                    else:
+                        stats['failed'] += 1
+                        logger.error(f"Failed to update record for Problem {problem_number}")
+                else:
+                    stats['failed'] += 1
+                    logger.error(f"Could not find record for Problem {problem_number}")
+                    
+            except Exception as e:
+                stats['failed'] += 1
+                logger.error(f"Error updating record: {e}")
+        
+        return stats
+    
+    def process_exam_directory(self, exam_dir: str, retry_failed: bool = False) -> bool:
+        """
+        Process entire exam directory and upsert database records with GPT content.
         
         Args:
             exam_dir: Path to exam directory
+            retry_failed: If True, only retry failed extractions (legacy parameter)
             
         Returns:
             True if successful, False otherwise
@@ -240,13 +338,27 @@ class SimpleProcessor:
             exam_metadata = self.filename_parser.parse_exam_filename(exam_name)
             print(f"✅ Exam metadata: {exam_metadata['exam_type']} ({exam_metadata['exam_date']})")
             
+            # Filter for retry_failed if requested (legacy support)
+            if retry_failed:
+                print("\n🔄 STEP 2.5: Checking for failed extractions...")
+                failed_records = self.find_failed_extractions(exam_name)
+                if not failed_records:
+                    print("✅ No failed extractions found!")
+                    return True
+                print(f"🔍 Found {len(failed_records)} failed extractions to retry")
+                
+                # Filter problems to only those with failed extractions
+                failed_problem_numbers = [record['problem_number'] for record in failed_records]
+                problems = [p for p in problems if p['problem_number'] in failed_problem_numbers]
+                print(f"📝 Filtered to {len(problems)} problems for retry")
+            
             # Step 3: Process images through GPT
             print("\n🤖 STEP 3: Processing images through GPT...")
             processed_problems, failed_problems = self.process_problem_images(problems, exam_metadata)
             
-            # Step 4: Insert to database
-            print("\n💾 STEP 4: Inserting records to database...")
-            stats = self.insert_problems_to_database(processed_problems)
+            # Step 4: Upsert to database (insert or update automatically)
+            print("\n💾 STEP 4: Upserting records to database...")
+            stats = self.upsert_problems_to_database(processed_problems)
             
             # Add failed problems to stats
             stats['processing_failed'] = len(failed_problems)
@@ -287,8 +399,11 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Process specific exam directory (creates records with GPT content)
+  # Process specific exam directory (upserts records with GPT content)
   python simple_processor.py input/2020-12-03_suneung_가형/
+  
+  # Retry only failed extractions (legacy option, upsert handles this automatically)
+  python simple_processor.py input/2020-12-03_suneung_가형/ --retry-failed
   
   # Process with verbose logging
   python simple_processor.py input/2020-12-03_suneung_가형/ --verbose
@@ -297,8 +412,9 @@ Examples:
   python simple_processor.py input/ --recursive
 
 Workflow:
-  1. Run simple_processor.py to extract content and create records
+  1. Run simple_processor.py to extract content and upsert records (creates or updates automatically)
   2. Run manual_answer_input.py to add answers to existing records
+  3. Re-run simple_processor.py anytime to update existing records with new GPT extractions
 """
     )
     
@@ -317,6 +433,12 @@ Workflow:
         "--verbose", "-v",
         action="store_true",
         help="Enable verbose logging"
+    )
+    
+    parser.add_argument(
+        "--retry-failed", "-rf",
+        action="store_true",
+        help="Only retry failed extractions (updates existing records)"
     )
     
     args = parser.parse_args()
@@ -354,7 +476,7 @@ Workflow:
             
             success_count = 0
             for exam_dir in exam_dirs:
-                if processor.process_exam_directory(exam_dir):
+                if processor.process_exam_directory(exam_dir, args.retry_failed):
                     success_count += 1
                 print()  # Empty line between exams
             
@@ -363,7 +485,7 @@ Workflow:
             
         else:
             # Process single exam directory
-            success = processor.process_exam_directory(args.exam_dir)
+            success = processor.process_exam_directory(args.exam_dir, args.retry_failed)
             return 0 if success else 1
             
     except KeyboardInterrupt:

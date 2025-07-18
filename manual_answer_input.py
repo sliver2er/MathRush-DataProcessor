@@ -410,10 +410,10 @@ class ManualAnswerInput:
             Dictionary mapping problem numbers to database records
         """
         try:
-            # Query database for records with this exam name
+            # Query database for records with this exam name using direct column
             result = self.db_saver.client.table(self.db_saver.table_name)\
                 .select("*")\
-                .eq("source_info->>exam_name", exam_name)\
+                .eq("exam_name", exam_name)\
                 .execute()
             
             if not result.data:
@@ -423,8 +423,7 @@ class ManualAnswerInput:
             # Organize by problem number
             existing_records = {}
             for record in result.data:
-                source_info = record.get('source_info', {})
-                problem_number = source_info.get('problem_number')
+                problem_number = record.get('problem_number')
                 
                 if problem_number:
                     existing_records[problem_number] = record
@@ -434,7 +433,32 @@ class ManualAnswerInput:
             
         except Exception as e:
             logger.error(f"Error querying existing records for {exam_name}: {e}")
-            return {}
+            # Fallback to old JSON query method for backward compatibility
+            try:
+                logger.info("Trying fallback JSON query method...")
+                result = self.db_saver.client.table(self.db_saver.table_name)\
+                    .select("*")\
+                    .eq("source_info->>exam_name", exam_name)\
+                    .execute()
+                
+                if not result.data:
+                    return {}
+                
+                # Organize by problem number from source_info
+                existing_records = {}
+                for record in result.data:
+                    source_info = record.get('source_info', {})
+                    problem_number = source_info.get('problem_number')
+                    
+                    if problem_number:
+                        existing_records[problem_number] = record
+                
+                logger.info(f"Found existing records for {len(existing_records)} problems in exam: {exam_name} (fallback)")
+                return existing_records
+                
+            except Exception as fallback_e:
+                logger.error(f"Fallback query also failed for {exam_name}: {fallback_e}")
+                return {}
     
     def update_existing_records(self, updates: List[Dict[str, any]]) -> Dict[str, int]:
         """

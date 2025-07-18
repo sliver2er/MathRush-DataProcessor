@@ -47,7 +47,7 @@ class Settings:
     # Data Validation Settings
     MIN_PROBLEM_LENGTH: int = int(os.getenv('MIN_PROBLEM_LENGTH', '10'))
     MAX_PROBLEM_LENGTH: int = int(os.getenv('MAX_PROBLEM_LENGTH', '5000'))
-    REQUIRED_FIELDS: list = ['content', 'problem_type', 'correct_answer']
+    REQUIRED_FIELDS: list = ['content', 'problem_type', 'correct_answer', 'exam_name', 'problem_number']
     
     @classmethod
     def get_pdf_config(cls) -> Dict[str, Any]:
