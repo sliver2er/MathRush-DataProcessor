@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Simple Image Processor for MathRush DataProcessor.
+GPT Image Processor for MathRush DataProcessor.
 Processes manually segmented problem images and updates database with GPT-extracted content.
 """
 
@@ -25,11 +25,11 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-class SimpleProcessor:
+class GptProcessor:
     """Simple processor for manually segmented problem images."""
     
     def __init__(self):
-        """Initialize the simple processor."""
+        """Initialize the GPT processor."""
         self.db_saver = DatabaseSaver()
         self.gpt_extractor = GPTExtractor()
         self.filename_parser = FilenameParser()
@@ -38,7 +38,7 @@ class SimpleProcessor:
         if not self.db_saver.test_connection():
             raise ConnectionError("Failed to connect to database")
             
-        logger.info("Simple Processor initialized")
+        logger.info("GPT Processor initialized")
     
     def scan_exam_directory(self, exam_dir: str) -> Dict[str, List[str]]:
         """
@@ -55,8 +55,8 @@ class SimpleProcessor:
             raise FileNotFoundError(f"Exam directory not found: {exam_dir}")
         
         # Patterns for different file types (support png, jpg, jpeg)
-        problem_pattern = re.compile(r'(.+)_problem_(\d+)\.(png|jpg|jpeg)$', re.IGNORECASE)
-        content_pattern = re.compile(r'(.+)_problem_(\d+)_(?:diagram|content|graph|figure).*\.(png|jpg|jpeg)$', re.IGNORECASE)
+        problem_pattern = re.compile(r'(.+)_problem_(\d+)\\.(png|jpg|jpeg)$', re.IGNORECASE)
+        content_pattern = re.compile(r'(.+)_problem_(\d+)_(?:diagram|content|graph|figure).*\\.(png|jpg|jpeg)$', re.IGNORECASE)
         
         problems = {}
         
@@ -326,13 +326,13 @@ class SimpleProcessor:
             exam_dir_path = Path(exam_dir)
             exam_name = exam_dir_path.name
             
-            print(f"\n{'='*60}")
-            print(f"📂 PROCESSING EXAM: {exam_name}")
-            print(f"📁 Directory: {exam_dir}")
+            print(f"\\n{'='*60}")
+            print(f" PROCESSING EXAM: {exam_name}")
+            print(f" Directory: {exam_dir}")
             print(f"{'='*60}")
             
             # Step 1: Scan directory for images
-            print("\n📷 STEP 1: Scanning for problem images...")
+            print("\\n STEP 1: Scanning for problem images...")
             problems = self.scan_exam_directory(exam_dir)
             
             if not problems:
@@ -342,47 +342,47 @@ class SimpleProcessor:
             print(f"✅ Found {len(problems)} problems")
             
             # Step 2: Extract exam metadata
-            print("\n📋 STEP 2: Extracting exam metadata...")
+            print("\\n STEP 2: Extracting exam metadata...")
             exam_metadata = self.filename_parser.parse_exam_filename(exam_name)
             print(f"✅ Exam metadata: {exam_metadata['exam_type']} ({exam_metadata['exam_date']})")
             
             # Filter for retry_failed if requested (legacy support)
             if retry_failed:
-                print("\n🔄 STEP 2.5: Checking for failed extractions...")
+                print("\\n STEP 2.5: Checking for failed extractions...")
                 failed_records = self.find_failed_extractions(exam_name)
                 if not failed_records:
                     print("✅ No failed extractions found!")
                     return True
-                print(f"🔍 Found {len(failed_records)} failed extractions to retry")
+                print(f" Found {len(failed_records)} failed extractions to retry")
                 
                 # Filter problems to only those with failed extractions
                 failed_problem_numbers = [record['problem_number'] for record in failed_records]
                 problems = [p for p in problems if p['problem_number'] in failed_problem_numbers]
-                print(f"📝 Filtered to {len(problems)} problems for retry")
+                print(f" Filtered to {len(problems)} problems for retry")
             
             # Step 3: Process images through GPT
-            print("\n🤖 STEP 3: Processing images through GPT...")
+            print("\\n STEP 3: Processing images through GPT...")
             processed_problems, failed_problems = self.process_problem_images(problems, exam_metadata)
             
             # Step 4: Upsert to database (insert or update automatically)
-            print("\n💾 STEP 4: Upserting records to database...")
+            print("\\n STEP 4: Upserting records to database...")
             stats = self.upsert_problems_to_database(processed_problems)
             
             # Add failed problems to stats
             stats['processing_failed'] = len(failed_problems)
             
             # Display final results
-            print(f"\n{'='*60}")
-            print(f"📊 PROCESSING COMPLETE")
+            print(f"\\n{'='*60}")
+            print(f" PROCESSING COMPLETE")
             print(f"{'='*60}")
             print(f"✅ Successful extractions: {stats['inserted']}")
             print(f"❌ Database failures: {stats['failed']}")
-            print(f"🔄 Extraction failures: {stats['processing_failed']}")
-            print(f"📈 Total attempted: {len(problems)}")
+            print(f" Extraction failures: {stats['processing_failed']}")
+            print(f" Total attempted: {len(problems)}")
             
             # Show failed problems if any
             if failed_problems:
-                print(f"\n⚠️  Failed to extract {len(failed_problems)} problems:")
+                print(f"\\n⚠️  Failed to extract {len(failed_problems)} problems:")
                 for failed in failed_problems:
                     error_msg = failed['error']
                     if len(error_msg) > 80:
@@ -391,9 +391,9 @@ class SimpleProcessor:
             
             total_failures = stats['failed'] + stats['processing_failed']
             success_rate = (len(problems) - total_failures) / len(problems) * 100 if len(problems) > 0 else 0
-            print(f"📊 Success rate: {success_rate:.1f}%")
+            print(f" Success rate: {success_rate:.1f}%")
             
-            print(f"\n💡 Next step: Run manual_answer_input.py to add answers to these records")
+            print(f"\\n Next step: Run manual_answer_input.py to add answers to these records")
             
             return total_failures == 0
             
@@ -406,26 +406,26 @@ class SimpleProcessor:
 def main():
     """Main CLI function."""
     parser = argparse.ArgumentParser(
-        description="Simple Image Processor for MathRush DataProcessor - Extracts content from images and creates database records",
+        description="GPT Image Processor for MathRush DataProcessor - Extracts content from images and creates database records",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Process specific exam directory (upserts records with GPT content)
-  python simple_processor.py input/2020-12-03_suneung_가형/
+  python gpt_processor.py input/2020-12-03_suneung_가형/
   
   # Retry only failed extractions (legacy option, upsert handles this automatically)
-  python simple_processor.py input/2020-12-03_suneung_가형/ --retry-failed
+  python gpt_processor.py input/2020-12-03_suneung_가형/ --retry-failed
   
   # Process with verbose logging
-  python simple_processor.py input/2020-12-03_suneung_가형/ --verbose
+  python gpt_processor.py input/2020-12-03_suneung_가형/ --verbose
   
   # Process multiple exams in input directory
-  python simple_processor.py input/ --recursive
+  python gpt_processor.py input/ --recursive
 
 Workflow:
-  1. Run simple_processor.py to extract content and upsert records (creates or updates automatically)
+  1. Run gpt_processor.py to extract content and upsert records (creates or updates automatically)
   2. Run manual_answer_input.py to add answers to existing records
-  3. Re-run simple_processor.py anytime to update existing records with new GPT extractions
+  3. Re-run gpt_processor.py anytime to update existing records with new GPT extractions
 """
     )
     
@@ -462,7 +462,7 @@ Workflow:
     )
     
     try:
-        processor = SimpleProcessor()
+        processor = GptProcessor()
         
         if args.recursive:
             # Process all exam directories
@@ -483,7 +483,7 @@ Workflow:
                 print(f"❌ No exam directories found in {args.exam_dir}")
                 return 1
             
-            print(f"📚 Found {len(exam_dirs)} exam directories to process")
+            print(f" Found {len(exam_dirs)} exam directories to process")
             
             success_count = 0
             for exam_dir in exam_dirs:
@@ -491,7 +491,7 @@ Workflow:
                     success_count += 1
                 print()  # Empty line between exams
             
-            print(f"📊 Final Results: {success_count}/{len(exam_dirs)} exams processed successfully")
+            print(f" Final Results: {success_count}/{len(exam_dirs)} exams processed successfully")
             return 0 if success_count == len(exam_dirs) else 1
             
         else:
@@ -500,7 +500,7 @@ Workflow:
             return 0 if success else 1
             
     except KeyboardInterrupt:
-        print("\n❌ Operation cancelled by user")
+        print("\\n❌ Operation cancelled by user")
         return 1
     except Exception as e:
         print(f"❌ Unexpected error: {e}")

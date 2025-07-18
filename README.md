@@ -9,17 +9,17 @@ MathRush 프로젝트용 수학 문제 **수동 처리** 및 라벨링 시스템
 
 ## 🎯 주요 기능
 
-- **수동 이미지 분할**: PDF에서 개별 문제 이미지 수동 추출
-- **GPT 내용 추출**: 문제 본문, 선택지 자동 추출 (GPT-4o-mini)
+- **수동 이미지 준비**: 개별 문제 이미지 수동 준비 (PDF 분할은 외부에서 진행)
+- **AI 내용 추출**: 문제 본문, 선택지 자동 추출 (GPT-4o-mini 또는 Gemini 1.5 Pro)
 - **수동 정답 입력**: 대화형 또는 배치 방식 정답 입력
 - **데이터베이스 저장**: Supabase에 구조화된 데이터 저장
 - **교육과정 분류**: 파일명 기반 자동 분류
-- **비용 최적화**: 설명 제외로 GPT 비용 절약
+- **비용 최적화**: 설명 제외로 AI 비용 절약
 
 ## 🛠️ 기술 스택
 
 - **Python 3.8+**
-- **OpenAI GPT-4o-mini**: 문제 내용 추출 (비용 최적화)
+- **OpenAI GPT-4o-mini / Google Gemini 2.5 Pro**: 문제 내용 추출
 - **Supabase**: 데이터베이스 저장
 - **Pillow**: 이미지 처리
 - **python-dotenv**: 환경변수 관리
@@ -42,8 +42,11 @@ cp .env.example .env
 ## ⚙️ 환경변수 설정
 
 ```env
-# OpenAI API
+# OpenAI API (optional, if using gpt_processor)
 OPENAI_API_KEY=your_openai_api_key
+
+# Google Gemini API (optional, if using gemini_processor)
+GOOGLE_API_KEY=your_google_api_key
 
 # Supabase
 SUPABASE_URL=your_supabase_url
@@ -58,12 +61,12 @@ MAX_RETRIES=3
 
 ### 📋 워크플로우 (2단계)
 
-1. **단계 1**: `simple_processor.py` - GPT로 문제 내용 추출 후 DB에 저장
+1. **단계 1**: `gemini_processor.py` 또는 `gpt_processor.py` - AI로 문제 내용 추출 후 DB에 저장
 2. **단계 2**: `manual_answer_input.py` - 기존 레코드에 정답 수동 입력
 
 ### 📁 이미지 준비
 
-먼저 PDF에서 개별 문제 이미지를 수동으로 분할하고 다음과 같이 배치:
+개별 문제 이미지를 수동으로 분할하고 다음과 같이 배치합니다 (PDF에서 분할하는 과정은 이 도구의 범위 밖입니다):
 
 ```
 input/2020-12-03_suneung_가형/
@@ -75,15 +78,24 @@ input/2020-12-03_suneung_가형/
 
 ### 🤖 단계 1: 문제 내용 추출
 
+Gemini 또는 GPT 중 선택하여 사용합니다.
+
+**Gemini 사용 시:**
 ```bash
 # 특정 시험 처리
-python simple_processor.py input/2020-12-03_suneung_가형/
+python gemini_processor.py input/2020-12-03_suneung_가형/
 
 # 모든 시험 일괄 처리
-python simple_processor.py input/ --recursive
+python gemini_processor.py input/ --recursive
+```
 
-# 자세한 로그 출력
-python simple_processor.py input/2020-12-03_suneung_가형/ --verbose
+**GPT 사용 시:**
+```bash
+# 특정 시험 처리
+python gpt_processor.py input/2020-12-03_suneung_가형/
+
+# 모든 시험 일괄 처리
+python gpt_processor.py input/ --recursive
 ```
 
 ### ✍️ 단계 2: 정답 입력
@@ -152,11 +164,12 @@ python lightweight_gpt_extractor.py path/to/problem.png --verbose
 
 ```
 MathRush-DataProcessor/
+├── gemini_processor.py         # Gemini 이미지 처리기
+├── gpt_processor.py            # GPT 이미지 처리기
 ├── manual_answer_input.py      # 수동 답안 입력 유틸리티
-├── simple_processor.py         # 간단한 이미지 처리기
-├── lightweight_gpt_extractor.py # 경량 GPT 추출기
 ├── processors/
 │   ├── __init__.py
+│   ├── gemini_extractor.py     # Gemini 문제 추출
 │   ├── gpt_extractor.py        # GPT 문제 추출
 │   └── db_saver.py             # 데이터베이스 저장
 ├── config/
@@ -281,9 +294,12 @@ MathRush-DataProcessor/
 ### 완전한 워크플로우 예시
 
 ```bash
-# 1단계: 문제 내용 추출 (GPT 사용)
-python simple_processor.py input/2020-12-03_suneung_가형/
+# 1단계: 문제 내용 추출 (Gemini 사용)
+python gemini_processor.py input/2020-12-03_suneung_가형/
 # 출력: ✅ 1개 문제 처리 완료, 데이터베이스에 저장
+
+# 1단계 (대안): 문제 내용 추출 (GPT 사용)
+python gpt_processor.py input/2020-12-03_suneung_가형/
 
 # 2단계: 정답 입력 (수동)
 # 방법 1: 단일 문제

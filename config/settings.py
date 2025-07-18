@@ -30,11 +30,23 @@ class Settings:
     OPENAI_MAX_TOKENS: int = int(os.getenv('OPENAI_MAX_TOKENS', '2000'))
     OPENAI_TEMPERATURE: float = float(os.getenv('OPENAI_TEMPERATURE', '0.1'))
     
-    # Rate limiting settings
+    # Rate limiting settings for OpenAI
     OPENAI_REQUESTS_PER_MINUTE: int = int(os.getenv('OPENAI_REQUESTS_PER_MINUTE', '50'))
     OPENAI_RETRY_ATTEMPTS: int = int(os.getenv('OPENAI_RETRY_ATTEMPTS', '5'))
     OPENAI_RETRY_BASE_DELAY: float = float(os.getenv('OPENAI_RETRY_BASE_DELAY', '2.0'))
     OPENAI_RETRY_MAX_DELAY: float = float(os.getenv('OPENAI_RETRY_MAX_DELAY', '60.0'))
+
+    # Gemini Settings
+    GOOGLE_API_KEY: str = os.getenv('GOOGLE_API_KEY', '')
+    GEMINI_MODEL: str = os.getenv('GEMINI_MODEL', 'gemini-2.5-pro')
+    GEMINI_MAX_TOKENS: int = int(os.getenv('GEMINI_MAX_TOKENS', '4000'))
+    GEMINI_TEMPERATURE: float = float(os.getenv('GEMINI_TEMPERATURE', '0.1'))
+
+    # Rate limiting settings for Gemini
+    GEMINI_REQUESTS_PER_MINUTE: int = int(os.getenv('GEMINI_REQUESTS_PER_MINUTE', '15')) # Gemini models may have specific RPM limits
+    GEMINI_RETRY_ATTEMPTS: int = int(os.getenv('GEMINI_RETRY_ATTEMPTS', '5'))
+    GEMINI_RETRY_BASE_DELAY: float = float(os.getenv('GEMINI_RETRY_BASE_DELAY', '5.0'))
+    GEMINI_RETRY_MAX_DELAY: float = float(os.getenv('GEMINI_RETRY_MAX_DELAY', '120.0'))
     
     # Supabase Settings
     SUPABASE_URL: str = os.getenv('SUPABASE_URL', '')
@@ -81,6 +93,20 @@ class Settings:
             'retry_base_delay': cls.OPENAI_RETRY_BASE_DELAY,
             'retry_max_delay': cls.OPENAI_RETRY_MAX_DELAY
         }
+
+    @classmethod
+    def get_gemini_config(cls) -> Dict[str, Any]:
+        """Get Gemini API configuration."""
+        return {
+            'api_key': cls.GOOGLE_API_KEY,
+            'model': cls.GEMINI_MODEL,
+            'max_tokens': cls.GEMINI_MAX_TOKENS,
+            'temperature': cls.GEMINI_TEMPERATURE,
+            'requests_per_minute': cls.GEMINI_REQUESTS_PER_MINUTE,
+            'retry_attempts': cls.GEMINI_RETRY_ATTEMPTS,
+            'retry_base_delay': cls.GEMINI_RETRY_BASE_DELAY,
+            'retry_max_delay': cls.GEMINI_RETRY_MAX_DELAY
+        }
     
     @classmethod
     def get_supabase_config(cls) -> Dict[str, Any]:
@@ -105,8 +131,8 @@ class Settings:
         """Validate that required settings are configured."""
         missing = []
         
-        if not cls.OPENAI_API_KEY:
-            missing.append('OPENAI_API_KEY')
+        if not cls.GOOGLE_API_KEY and not cls.OPENAI_API_KEY:
+            missing.append('GOOGLE_API_KEY or OPENAI_API_KEY')
         
         if not cls.SUPABASE_URL:
             missing.append('SUPABASE_URL')
@@ -134,6 +160,7 @@ class Settings:
         return {
             'pdf': cls.get_pdf_config(),
             'openai': cls.get_openai_config(),
+            'gemini': cls.get_gemini_config(),
             'supabase': cls.get_supabase_config(),
             'directories': cls.get_directories(),
             'processing': {

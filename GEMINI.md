@@ -1,14 +1,14 @@
-# Claude 협업 가이드 - MathRush DataProcessor
+# Gemini 협업 가이드 - MathRush DataProcessor
 
 ## 📚 프로젝트 개요
 **GitHub**: https://github.com/sliver2er/MathRush-DataProcessor
 
-MathRush 프로젝트용 수학 문제 **수동 처리** 및 라벨링 시스템입니다. GPT-4o-mini를 활용하여 수동으로 분할된 문제 이미지를 구조화된 데이터로 변환합니다.
+MathRush 프로젝트용 수학 문제 **수동 처리** 및 라벨링 시스템입니다. Gemini 2.5 Pro를 활용하여 수동으로 분할된 문제 이미지를 구조화된 데이터로 변환합니다.
 
 ## 🎯 현재 목표
 - **메인 목표**: 수동 분할된 수학 문제 이미지 → Supabase DB 저장 시스템
 - **예상 작업량**: 1,000-2,000문제
-- **예상 비용**: $3-10 (GPT-4o-mini 기준, 설명 추출 제외)
+- **예상 비용**: $3-10 (Gemini 2.5 Pro 기준, 설명 추출 제외)
 - **예상 소요시간**: 1-2시간 (수동 답안 입력 + 자동 내용 추출)
 
 ## 📁 프로젝트 구조 (간소화)
@@ -76,7 +76,7 @@ MathRush-DataProcessor/
 - **AI 모델**: GPT-4o-mini (OpenAI) / Gemini 2.5 Pro (Google) - 내용 추출만
 - **데이터베이스**: Supabase (PostgreSQL)
 - **개발 환경**: Python 3.8+
-- **이미지 처리**: 수동 분할 + GPT Vision
+- **이미지 처리**: 수동 분할 + AI Vision
 
 ## 📊 데이터베이스 스키마 (Supabase)
 ```sql
@@ -144,14 +144,15 @@ MathRush-DataProcessor/
 ## ✅ 현재 진행상황 체크리스트
 
 ### 📦 환경 설정
-- [ ] OpenAI API 키 설정
+- [ ] Google API 키 설정
+- [ ] OpenAI API 키 설정 (선택 사항)
 - [ ] Supabase 프로젝트 생성 및 연결
 - [ ] problems 테이블 생성
-- [ ] Python 라이브러리 설치 (openai, supabase)
+- [ ] Python 라이브러리 설치 (google-generativeai, openai, supabase)
 
 ### 🧪 테스트 단계 (10문제 샘플)
-- [ ] 수동 추출 테스트 (Claude 채팅)
-- [ ] GPT 프롬프트 최적화
+- [ ] 수동 추출 테스트 (Gemini 채팅)
+- [ ] Gemini 프롬프트 최적화
 - [ ] 데이터 품질 및 정확도 검증
 
 ### 🚀 자동화 개발
@@ -165,10 +166,10 @@ MathRush-DataProcessor/
 - [ ] 오류 처리 및 재시도
 - [ ] 데이터 품질 검증 및 후처리
 
-## 🎯 Claude와의 협업 포인트
+## 🎯 Gemini와의 협업 포인트
 
 ### 1. 프롬프트 최적화
-- GPT-4o-mini용 문제 추출 프롬프트 개발
+- Gemini 2.5 Pro용 문제 추출 프롬프트 개발
 - 교육과정 분류 정확도 향상
 - JSON 형식 안정성 확보
 
@@ -241,7 +242,7 @@ python -m processors.gpt_extractor path/to/problem.png --verbose
 6. **난이도 결정** - correct_rate 데이터 수집 및 difficulty 업데이트 (향후 작업)
 
 ## 📞 협업 시 참고사항
-- **코드 리뷰**: 모든 핵심 로직은 Claude와 함께 검토
+- **코드 리뷰**: 모든 핵심 로직은 Gemini와 함께 검토
 - **테스트 우선**: 작은 단위로 테스트하며 점진적 개발
 - **문서화**: 변경사항은 즉시 이 문서에 반영
 - **에러 처리**: 모든 외부 API 호출에 적절한 예외 처리
